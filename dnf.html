@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>MR340 DNF by Year/Division/Checkpoint</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://d3js.org/d3.v6.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 24px;
+    }
+
+    .centered {
+      max-width: 900px;
+      margin: auto;
+    }
+
+    #toolbar {
+      margin-bottom: 16px;
+    }
+
+    #toolbar select {
+      margin-right: 12px;
+      font-size: 15px;
+      padding: 3px 7px;
+    }
+
+    .bar-chart-title {
+      font-size: 1.15em;
+      font-weight: bold;
+      margin: 16px 0 2px 10px;
+    }
+
+    .axis-label {
+      font-size: 13px;
+      fill: #111;
+    }
+
+    .bar-label {
+      font-size: 13px;
+      fill: #222;
+    }
+
+    .bar:hover {
+      opacity: 0.7;
+    }
+
+    #tooltip {
+      position: absolute;
+      background: #fff;
+      border: 1px solid #333;
+      border-radius: 4px;
+      padding: 6px 12px;
+      font-size: 14px;
+      pointer-events: none;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.13);
+      z-index: 10;
+      visibility: hidden;
+      transition: opacity 0.12s;
+    }
+
+    h2 {
+      margin-bottom: 0.5em;
+    }
+
+    h3 {
+      margin: 35px 0 10px 0;
+    }
+
+    .checkpoint-table {
+      border-collapse: collapse;
+      margin-bottom: 20px;
+      width: 100%;
+    }
+
+    .checkpoint-table th,
+    .checkpoint-table td {
+      border: 1px solid #ccc;
+      padding: 4px 8px;
+      font-size: 15px;
+    }
+
+    .checkpoint-table th {
+      background: #f0f0f0;
+    }
+
+    .checkpoint-group {
+      background: #f7f7f7;
+      font-weight: bold;
+    }
+
+    .dnf-count {
+      font-size: 13px;
+      color: #b00;
+      padding-left: 6px;
+    }
+
+    @media (max-width: 1024px) {
+
+      .checkpoint-table,
+      .checkpoint-table th,
+      .checkpoint-table td {
+        font-size: 13px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="centered">
+    <h2>MR340 "Did Not Finish" by Year, Division &amp; Last Checkpoint</h2>
+    <p>Each year, approximately 1/3 of the MR340 entries do not finish the race.
+    </p>
+    <div id="toolbar">
+      <label><b>Year:</b></label>
+      <select id="yearDropdown"></select>
+      <label style="margin-left:8px;"><b>Division:</b></label>
+      <select id="divisionDropdown"></select>
+    </div>
+    <div class="bar-chart-title">DNF Count by Last Checkpoint</div>
+    <div id="dnf-bar-chart"></div>
+    <a href="divisions.html">Previous</a> | <a href="author.html">Next</a>
+    <div id="dnf-report"></div>
+  </div>
+  <div id="tooltip"></div>
+  <script>
+    const csvFile = 'data.csv';
+
+    // Define the checkpoint order here, START to END
+    const CHECKPOINT_ORDER = [
+      "Kaw Point",
+      "LaBenite",
+      "Ft Osage",
+      "Napolean",
+      "Lexington",
+      "Waverly",
+      "Miami",
+      "Glasgow",
+      "Franklin Island",
+      "Katfish Katy's",
+      "Cooper's Landing",
+      "Jeff City",
+      "Chamois",
+      "Mokane",
+      "Portland",
+      "Hermann",
+      "New Haven",
+      "Klondike",
+      "Weldon Springs",
+      "St. Charles"
+    ];
+
+    // Helper to order checkpoint labels for chart/table
+    function checkpointOrder(a, b) {
+      const idxA = CHECKPOINT_ORDER.indexOf(a);
+      const idxB = CHECKPOINT_ORDER.indexOf(b);
+      // Put checkpoints not in the list at the end in alpha order
+      if (idxA === -1 && idxB === -1) return d3.ascending(a, b);
+      if (idxA === -1) return 1;
+      if (idxB === -1) return -1;
+      return idxA - idxB;
+    }
+
+    let allData, years, divisions;
+    let currentYear = "All", currentDivision = "All";
+
+    d3.csv(csvFile).then(data => {
+      allData = data.filter(d =>
+        d.Status && d.Status.trim() === "DNF" &&
+        d.Year && d["Last Checkpoint"]
+      );
+
+      years = Array.from(new Set(allData.map(d => d.Year))).sort();
+      divisions = Array.from(new Set(allData.map(d => d.Division))).sort();
+
+      setupDropdowns();
+      updateAll();
+    });
+
+    function setupDropdowns() {
+      // Year dropdown
+      const yearSel = d3.select("#yearDropdown");
+      yearSel.html(""); // Clear if reloaded
+      yearSel.append("option").attr("value", "All").text("All Years");
+      years.forEach(y =>
+        yearSel.append("option").attr("value", y).text(y)
+      );
+      yearSel.property("value", "All");
+      yearSel.on("change", function () {
+        currentYear = this.value;
+        updateAll();
+      });
+
+      // Division dropdown
+      const divSel = d3.select("#divisionDropdown");
+      divSel.html(""); // Clear if reloaded
+      divSel.append("option").attr("value", "All").text("All Divisions");
+      divisions.forEach(d =>
+        divSel.append("option").attr("value", d).text(d)
+      );
+      divSel.property("value", "All");
+      divSel.on("change", function () {
+        currentDivision = this.value;
+        updateAll();
+      });
+    }
+
+    function filterData() {
+      return allData.filter(d =>
+        (currentYear === "All" || d.Year === currentYear) &&
+        (currentDivision === "All" || d.Division === currentDivision)
+      );
+    }
+
+    function updateAll() {
+      const dnfData = filterData();
+      drawBarChart(dnfData);
+      drawTable(dnfData);
+    }
+
+    function drawBarChart(data) {
+      // Clear entire bar chart container before drawing, so no lingering messages or SVG
+      d3.select("#dnf-bar-chart").html("");
+
+      // Tally DNF by checkpoint
+      const checkpointCounts = Array.from(
+        d3.rollup(
+          data,
+          v => v.length,
+          d => d["Last Checkpoint"]
+        ),
+        ([checkpoint, count]) => ({ checkpoint, count })
+      ).sort((a, b) => checkpointOrder(a.checkpoint, b.checkpoint));
+
+      const margin = { top: 20, right: 55, bottom: 32, left: 120 };
+      const width = 720, height = Math.max(60, checkpointCounts.length * 25 + margin.top + margin.bottom);
+
+      if (checkpointCounts.length === 0) {
+        d3.select("#dnf-bar-chart").html(
+          '<div style="color:#b00;margin:12px 0 20px 18px; font-weight:500;">No DNF records for this selection.</div>'
+        );
+        return;
+      }
+
+      const svg = d3.select("#dnf-bar-chart")
+        .append("svg")
+        .attr("width", width)
+        .attr("height", height);
+
+      const y = d3.scaleBand()
+        .domain(checkpointCounts.map(d => d.checkpoint))
+        .range([margin.top, height - margin.bottom])
+        .padding(0.17);
+
+      const x = d3.scaleLinear()
+        .domain([0, d3.max(checkpointCounts, d => d.count) * 1.09])
+        .range([margin.left, width - margin.right]);
+
+      svg.append("g")
+        .attr("class", "y-axis")
+        .attr("transform", `translate(${margin.left - 3},0)`)
+        .call(d3.axisLeft(y).tickSize(0))
+        .call(g => g.selectAll("text").attr("class", "axis-label"))
+        .call(g => g.selectAll("path,line").remove());
+
+      svg.append("g")
+        .attr("transform", `translate(0,${height - margin.bottom})`)
+        .call(d3.axisBottom(x).ticks(6).tickFormat(d3.format("d")))
+        .call(g => g.selectAll("text").attr("class", "axis-label"));
+
+      svg.append("text")
+        .attr("x", width - margin.right - 10)
+        .attr("y", height - 5)
+        .attr("text-anchor", "end")
+        .attr("font-size", "13px")
+        .attr("class", "axis-label")
+        .text("DNF Count");
+
+      const tooltip = d3.select("#tooltip");
+
+      svg.selectAll(".bar")
+        .data(checkpointCounts)
+        .enter()
+        .append("rect")
+        .attr("class", "bar")
+        .attr("y", d => y(d.checkpoint))
+        .attr("x", x(0))
+        .attr("height", y.bandwidth())
+        .attr("width", 0)
+        .attr("fill", "#f55f74")
+        .on("mousemove", function (event, d) {
+          tooltip.style("visibility", "visible")
+            .html(`<strong>Checkpoint:</strong> ${d.checkpoint}<br>
+               <strong>DNF Count:</strong> ${d.count}`)
+            .style("top", (event.pageY - 32) + "px")
+            .style("left", (event.pageX + 12) + "px");          
+        })
+        .on("mouseout", function () {
+          tooltip.style("visibility", "hidden");
+          d3.select(this).attr("fill", "#f55f74");
+        })
+        .transition()
+        .duration(950)
+        .attr("width", d => x(d.count) - x(0));
+
+      svg.selectAll(".bar-label")
+        .data(checkpointCounts)
+        .enter()
+        .append("text")
+        .attr("class", "bar-label")
+        .attr("y", d => y(d.checkpoint) + y.bandwidth() / 2 + 5)
+        .attr("x", d => x(d.count) + 6)
+        .text(d => d.count);
+    }
+
+    function drawTable(data) {
+      d3.select("#dnf-report").html("");
+      // Grouped: {year -> {checkpoint -> [rows]}}
+      const grouped = d3.groups(
+        data,
+        d => d.Year,
+        d => d["Last Checkpoint"]
+      ).sort((a, b) => d3.descending(a[0], b[0]));
+
+      const report = d3.select("#dnf-report");
+      if (grouped.length === 0) {
+        report.append("div")
+          .style("color", "#b00")
+          .style("margin", "16px 0 30px 12px")
+          .style("font-weight", "bold")
+          .text("No DNF data matches your selection.");
+        return;
+      }
+      grouped.forEach(([year, checkpoints]) => {
+        report.append("h3")
+          .text(`Year: ${year} (${d3.sum(checkpoints, cp => cp[1].length)} DNF)`);
+        const table = report.append("table")
+          .attr("class", "checkpoint-table");
+        table.append("thead").append("tr")
+          .selectAll("th").data([
+            "Last Checkpoint", "Division", "Boat/Team/Member(s)"
+          ]).enter().append("th").text(d => d);
+        const tbody = table.append("tbody");
+        // Sort checkpoints per year in start-to-finish order
+        checkpoints.sort((a, b) => checkpointOrder(a[0], b[0])).forEach(([checkpoint, members]) => {
+          const groupRow = tbody.append("tr").attr("class", "checkpoint-group");
+          groupRow.append("td")
+            .attr("colspan", 3)
+            .html(`<span><strong>${checkpoint}</strong> <span class="dnf-count">${members.length} DNF</span></span>`);
+          members.forEach(row => {
+            const tr = tbody.append("tr");
+            tr.append("td");
+            tr.append("td").text(row.Division || "");
+
+            let who = row.Team ? row.Team : (row["Team Members"] || "");
+            if (!who && row["Team Member 1"]) {
+              const maxMembers = 5;
+              const names = [];
+              for (let i = 1; i <= maxMembers; i++) {
+                const m = row["Team Member " + i];
+                if (m && m.trim()) names.push(m.trim());
+              }
+              who = names.join("; ");
+            }
+            const tdMembers = tr.append("td");
+            if (who) {
+              // Split names by semicolon, trim, and create links
+              const names = who.split(";").map(n => n.trim()).filter(n => n.length > 0);
+              tdMembers.html(
+                names.map(name =>
+                  `<a href="4.html?name=${encodeURIComponent(name)}">${name}</a>`
+                ).join("; ")
+              );
+            } else {
+              tdMembers.text("");
+            }
+            // Total Time column removed
+          });
+        });
+      });
+    }
+  </script>
+</body>
+
+</html>

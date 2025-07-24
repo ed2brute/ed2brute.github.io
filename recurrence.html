@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>MR340 First Timers versus Veteran Racers</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 900px;
+            margin: auto;
+            padding: 20px;
+        }
+
+        h2 {
+            margin-bottom: 10px;
+        }
+
+        .centered {
+            max-width: 900px;
+            margin: auto;
+            margin-bottom: 25px;
+        }
+
+        #filters {
+            margin-bottom: 15px;
+        }
+
+        select {
+            margin-right: 12px;
+            font-size: 14px;
+            padding: 5px 10px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+
+        th,
+        td {
+            padding: 8px 12px;
+            border: 1px solid #ccc;
+            text-align: left;
+            vertical-align: top;
+            cursor: default;
+            white-space: normal;
+        }
+
+        th.sortable:hover {
+            background-color: #f5f5f5;
+            cursor: pointer;
+        }
+
+        th.sorted-asc::after {
+            content: " ▲";
+            font-size: 12px;
+        }
+
+        th.sorted-desc::after {
+            content: " ▼";
+            font-size: 12px;
+        }
+
+        td pre {
+            margin: 0;
+            font-family: inherit;
+            white-space: pre-wrap;
+        }
+
+        #tooltip {
+            position: absolute;
+            visibility: hidden;
+            background: #fff;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 6px 12px;
+            font-size: 14px;
+            pointer-events: none;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            z-index: 10;
+        }
+
+        /* Legend box styling */
+        .legend-border {
+            fill: none;
+            stroke: #333;
+            stroke-width: 1.5px;
+            rx: 6;
+            ry: 6;
+        }
+    </style>
+</head>
+
+<body>
+    <h2>MR340 First Time versus Veteran Racers</h2>
+
+    <div id="chart" style="max-width: 900px; margin: auto; margin-bottom: 30px;"></div>
+
+    <div class="centered">
+        <p id="summary-text">
+            <!-- Summary statistics will be injected here -->
+        </p>
+        <a href="averages.html">Previous</a> | <a href="divisions.html">Next</a>
+    </div>
+
+    <div id="filters">
+        <label for="divisionFilter">Division:</label>
+        <select id="divisionFilter">
+            <option value="all">All Divisions</option>
+        </select>
+
+        <label for="statusFilter">Status:</label>
+        <select id="statusFilter">
+            <option value="all">All Statuses</option>
+        </select>
+    </div>
+
+    <table id="racerTable">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th class="sortable" data-key="numRaces">Number of Races</th>
+                <th class="sortable" data-key="bestTotalTime">Best Time</th>
+                <th>Race Details (Year / Division / Status)</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+
+    <div id="tooltip"></div>
+
+    <script>
+        const csvFilePath = 'data.csv'; // Replace with your CSV path
+
+        function parseTimeToSeconds(timeStr) {
+            if (!timeStr) return null;
+            const parts = timeStr.split(':').map(Number);
+            if (parts.length !== 3) return null;
+            return parts[0] * 3600 + parts[1] * 60 + parts[2];
+        }
+
+        function formatSecondsToHHMMSS(seconds) {
+            if (seconds == null || isNaN(seconds)) return 'N/A';
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = Math.floor(seconds % 60);
+            return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        }
+
+        d3.csv(csvFilePath).then(data => {
+            data = data.filter(d => d['Team Member 1'] || d['Team Name']);
+
+            const racerMap = new Map();
+
+            data.forEach(d => {
+                const name = (d['Team Member 1'] || d['Team Name']).trim();
+                if (!name) return;
+
+                let racer = racerMap.get(name);
+                if (!racer) {
+                    racer = {
+                        name: name,
+                        races: []
+                    };
+                    racerMap.set(name, racer);
+                }
+                racer.races.push({
+                    year: d.Year,
+                    division: d.Division,
+                    status: d.Status,
+                    totalTimeStr: d['Total Time'],
+                    totalTimeSec: parseTimeToSeconds(d['Total Time'])
+                });
+            });
+
+            const totalRacers = racerMap.size;
+
+            const yearsSet = new Set(data.map(d => d.Year));
+            const years = Array.from(yearsSet).sort();
+
+            const racersByYear = {};
+            data.forEach(d => {
+                if (!d.Year) return;
+                const y = d.Year;
+                const name = (d['Team Member 1'] || d['Team Name']).trim();
+                if (!name) return;
+                if (!racersByYear[y]) racersByYear[y] = new Set();
+                racersByYear[y].add(name);
+            });
+
+            const firstYearByRacer = new Map();
+            racerMap.forEach(racer => {
+                const yearsList = racer.races.map(r => r.year).filter(Boolean);
+                if (yearsList.length === 0) return;
+                firstYearByRacer.set(racer.name, yearsList.reduce((a, b) => (a < b ? a : b)));
+            });
+
+            const firstTimersByYear = {};
+            for (const [racer, y] of firstYearByRacer.entries()) {
+                if (!firstTimersByYear[y]) firstTimersByYear[y] = 0;
+                firstTimersByYear[y]++;
+            }
+
+            const stackedData = years.map(year => {
+                const totalRacersInYear = racersByYear[year] ? racersByYear[year].size : 0;
+                const firstTimers = firstTimersByYear[year] || 0;
+                const returning = Math.max(totalRacersInYear - firstTimers, 0);
+                return {
+                    year,
+                    "First-time": firstTimers,
+                    "Returning": returning
+                };
+            });
+
+            const margin = { top: 30, right: 20, bottom: 50, left: 60 },
+                width = 900 - margin.left - margin.right,
+                height = 300 - margin.top - margin.bottom;
+
+            const svg = d3.select("#chart")
+                .append("svg")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", height + margin.top + margin.bottom)
+                .append("g")
+                .attr("transform", `translate(${margin.left},${margin.top})`);
+
+            const keys = ["First-time", "Returning"];
+
+            const x = d3.scaleBand()
+                .domain(years)
+                .range([0, width])
+                .padding(0.1);
+
+            const y = d3.scaleLinear()
+                .domain([0, d3.max(stackedData, d => d["First-time"] + d["Returning"])])
+                .nice()
+                .range([height, 0]);
+
+            const color = d3.scaleOrdinal()
+                .domain(keys)
+                .range(["#4a2377", "#8cc5e3"]);
+
+            const stack = d3.stack()
+                .keys(keys);
+
+            const series = stack(stackedData);
+
+            const areaStart = d3.area()
+                .x(d => x(d.data.year) + x.bandwidth() / 2)
+                .y0(height)
+                .y1(height);
+
+            const area = d3.area()
+                .x(d => x(d.data.year) + x.bandwidth() / 2)
+                .y0(d => y(d[0]))
+                .y1(d => y(d[1]));
+
+            // Draw areas with initial zero height, then transition to final area
+            svg.selectAll("path")
+                .data(series)
+                .enter()
+                .append("path")
+                .attr("fill", d => color(d.key))
+                .attr("d", areaStart)  // start from zero-height area
+                .transition()
+                .duration(1400)
+                .attr("d", area);
+
+            // X Axis
+            svg.append("g")
+                .attr("transform", `translate(0,${height})`)
+                .call(d3.axisBottom(x))
+                .selectAll("text")
+                .attr("transform", "rotate(-40)")
+                .style("text-anchor", "end");
+
+            // Y Axis
+            svg.append("g")
+                .call(d3.axisLeft(y));
+
+            // Find max points
+            const maxFirstTime = d3.max(stackedData, d => d["First-time"]);
+            const firstTimeYear = stackedData.find(d => d["First-time"] === maxFirstTime).year;
+
+            const maxReturning = d3.max(stackedData, d => d["Returning"]);
+            const returningYear = stackedData.find(d => d["Returning"] === maxReturning).year;
+
+            // Calculate coordinates for annotations
+            const ftX = x(firstTimeYear) + x.bandwidth() / 2;
+            const ftY = y(stackedData.find(d => d.year === firstTimeYear)["First-time"]);
+
+            const retX = x(returningYear) + x.bandwidth() / 2;
+            const retY = y(stackedData.find(d => d.year === returningYear)["Returning"] + stackedData.find(d => d.year === returningYear)["First-time"]);
+
+            // Annotation container
+            const annotations = svg.append("g").attr("class", "annotations");
+
+            // More vertical separation for annotations
+            const annotationSeparation = 80;
+
+            // First-time annotation (place above area)
+            annotations.append("line")
+                .attr("x1", ftX)
+                .attr("y1", ftY)
+                .attr("x2", ftX)
+                .attr("y2", ftY - annotationSeparation)
+                .attr("stroke", "#888")   // changed to black
+                .attr("stroke-width", 1.5)
+                .attr("marker-end", "url(#arrowhead)"); // if arrowheads are used
+
+            annotations.append("text")
+                .attr("x", ftX)
+                .attr("y", ftY - annotationSeparation - 10)
+                .attr("text-anchor", "middle")
+                .attr("fill", "#888")  // text fill black
+                .style("font-weight", "bold")
+                .text(`Most First-time: ${firstTimeYear} (${maxFirstTime})`);
+
+            // Returning annotation (place below area, more vertical separation)
+            const retTextYOffset = annotationSeparation + 40;
+
+            annotations.append("line")
+                .attr("x1", retX)
+                .attr("y1", retY)
+                .attr("x2", retX)
+                .attr("y2", retY + retTextYOffset)
+                .attr("stroke", "#888")   // changed to black
+                .attr("stroke-width", 1.5)
+                .attr("marker-end", "url(#arrowhead)");
+
+            annotations.append("text")
+                .attr("x", retX - 25)
+                .attr("y", retY + retTextYOffset + 15)
+                .attr("text-anchor", "middle")
+                .attr("fill", "#888")  // text fill black
+                .style("font-weight", "bold")
+                .text(`Most Returning: ${returningYear} (${maxReturning})`);
+
+            svg.append("defs").append("marker")
+                .attr("id", "arrowhead")
+                .attr("viewBox", "-0 -5 10 10")
+                .attr("refX", 6)
+                .attr("refY", 0)
+                .attr("orient", "auto")
+                .attr("markerWidth", 6)
+                .attr("markerHeight", 6)
+                .attr("xoverflow", "visible")
+                .append("path")
+                .attr("d", "M 0,-5 L 10 ,0 L 0,5")
+                .attr("fill", "#888")
+                .style("stroke", "none");
+
+
+            // Legend setup
+            const legendX = 10;
+            const legendY = -15;
+            const legendPaddingX = 8;
+            const legendPaddingY = 8;
+            const cellHeight = 22;
+            const legendWidth = 120;
+            const legendHeight = keys.length * cellHeight + 10;
+
+            const legend = svg.append("g")
+                .attr("class", "legend")
+                .attr("transform", `translate(${legendX},${legendY})`);
+
+            // Add border box behind legend items
+            legend.append("rect")
+                .attr("class", "legend-border")
+                .attr("x", -legendPaddingX)
+                .attr("y", -legendPaddingY)
+                .attr("width", legendWidth + legendPaddingX * 2)
+                .attr("height", legendHeight + legendPaddingY * 2)
+                .attr("rx", 6)
+                .attr("ry", 6);
+
+            // Legend items
+            keys.forEach((key, i) => {
+                const g = legend.append("g").attr("transform", `translate(0,${i * cellHeight})`);
+
+                g.append("rect")
+                    .attr("width", 18)
+                    .attr("height", 18)
+                    .attr("fill", color(key));
+
+                g.append("text")
+                    .attr("x", 24)
+                    .attr("y", 14)
+                    .attr("class", "legend-text")
+                    .text(key);
+            });
+
+            // Tooltip setup
+            const tooltip = d3.select("#tooltip");
+
+            // Add invisible rect to capture mouse events over chart area
+            svg.append("rect")
+                .attr("width", width)
+                .attr("height", height)
+                .attr("fill", "none")
+                .attr("pointer-events", "all")
+                .on("mousemove", mousemove)
+                .on("mouseleave", () => tooltip.style("visibility", "hidden"));
+
+            function mousemove(event) {
+                const mouseX = d3.pointer(event)[0];
+                // Find the closest index on x scale (band)
+                const x0Index = Math.floor(mouseX / x.bandwidth());
+                if (x0Index < 0 || x0Index >= years.length) {
+                    tooltip.style("visibility", "hidden");
+                    return;
+                }
+                const year = years[x0Index];
+                const dataPoint = stackedData[x0Index];
+
+                // Position tooltip near the mouse cursor
+                tooltip.style("visibility", "visible")
+                    .style("left", (event.pageX + 15) + "px")
+                    .style("top", (event.pageY + 15) + "px")
+                    .html(`
+                        <strong>Year:</strong> ${year}<br/>
+                        <strong>First-time:</strong> ${dataPoint["First-time"]}<br/>
+                        <strong>Returning:</strong> ${dataPoint["Returning"]}
+                    `);
+            }
+
+            // Compute and inject summary statistics (existing code unchanged)
+            const firstTimersCountsArr = Object.values(firstTimersByYear);
+            const avgFirstTimers = firstTimersCountsArr.length
+                ? (firstTimersCountsArr.reduce((a, b) => a + b, 0) / firstTimersCountsArr.length)
+                : 0;
+
+            const avgPercentFirstTimers = years.length > 0
+                ? d3.mean(years.map(year => {
+                    const t = firstTimersByYear[year] || 0;
+                    const total = racersByYear[year] ? racersByYear[year].size : 0;
+                    return total > 0 ? (t / total * 100) : 0;
+                }))
+                : 0;
+
+            const averageFirstTimersRounded = avgFirstTimers.toFixed(1);
+            const averageFirstTimersPercentRounded = avgPercentFirstTimers.toFixed(1);
+
+            const racersWithMultipleYears = Array.from(racerMap.values()).filter(r => {
+                const yearsSet = new Set(r.races.map(race => race.year));
+                return yearsSet.size > 1;
+            }).length;
+
+            const recurrenceRate = totalRacers > 0 ? ((racersWithMultipleYears / totalRacers) * 100).toFixed(1) : "0.0";
+
+            const racersWithSingleYear = totalRacers - racersWithMultipleYears;
+            const singleYearPercent = totalRacers > 0 ? ((racersWithSingleYear / totalRacers) * 100).toFixed(1) : "0.0";
+
+            d3.select('#summary-text').html(`
+            There are, on average, <strong>${averageFirstTimersRounded}</strong> first-time racers each year.<br/>
+            The recurrence rate (racers participating in multiple years) is <strong>${recurrenceRate}%</strong>.<br/>
+            The fraction of racers who competed in exactly one year is <strong>${singleYearPercent}%</strong>.
+        `);
+
+            // Setup filters, sorting, and table (existing code unchanged)
+            const divisions = Array.from(new Set(data.map(d => d.Division))).sort();
+            const statuses = Array.from(new Set(data.map(d => d.Status))).sort();
+
+            const divisionFilter = d3.select('#divisionFilter');
+            divisions.forEach(dv => divisionFilter.append('option').attr('value', dv).text(dv));
+
+            const statusFilter = d3.select('#statusFilter');
+            statuses.forEach(st => statusFilter.append('option').attr('value', st).text(st));
+
+            const tbody = d3.select('#racerTable tbody');
+
+            let currentSortKey = 'numRaces';
+            let currentSortAsc = false;
+
+            function filterAndRender() {
+                const selDivision = divisionFilter.property('value');
+                const selStatus = statusFilter.property('value');
+
+                const filteredRacers = Array.from(racerMap.values()).map(racer => {
+                    const filteredRaces = racer.races.filter(r =>
+                        (selDivision === 'all' || r.division === selDivision) &&
+                        (selStatus === 'all' || r.status === selStatus)
+                    );
+
+                    const numRaces = filteredRaces.length;
+                    const totalTimes = filteredRaces.map(r => r.totalTimeSec).filter(t => t != null);
+                    const bestTotalTime = totalTimes.length > 0 ? d3.min(totalTimes) : null;
+
+                    const raceDetails = filteredRaces
+                        .map(r => `${r.year || 'N/A'} / ${r.division || 'N/A'} / ${r.status || 'N/A'}`)
+                        .join('\n');
+
+                    return {
+                        name: racer.name,
+                        races: filteredRaces,
+                        numRaces,
+                        bestTotalTime,
+                        raceDetails: raceDetails || 'N/A'
+                    };
+                }).filter(r => r.numRaces > 0);
+
+                if (currentSortKey) {
+                    filteredRacers.sort((a, b) => {
+                        let valA = a[currentSortKey];
+                        let valB = b[currentSortKey];
+                        if (valA == null) valA = Infinity;
+                        if (valB == null) valB = Infinity;
+                        return currentSortAsc ? valA - valB : valB - valA;
+                    });
+                }
+
+                tbody.html("");
+
+                tbody.selectAll('tr')
+                    .data(filteredRacers, d => d.name)
+                    .enter()
+                    .append('tr')
+                    .html(d => `
+                    <td><a href="racer.html?name=${encodeURIComponent(d.name)}">${d.name}</a></td>
+                    <td>${d.numRaces}</td>
+                    <td>${formatSecondsToHHMMSS(d.bestTotalTime)}</td>
+                    <td><pre>${d.raceDetails}</pre></td>
+                 `);
+            }
+
+            filterAndRender();
+
+            divisionFilter.on('change', filterAndRender);
+            statusFilter.on('change', filterAndRender);
+
+            d3.selectAll('th.sortable').on('click', function () {
+                const key = d3.select(this).attr('data-key');
+                if (currentSortKey === key) {
+                    currentSortAsc = !currentSortAsc;
+                } else {
+                    currentSortKey = key;
+                    currentSortAsc = (key === 'bestTotalTime');
+                }
+
+                d3.selectAll('th.sortable')
+                    .classed('sorted-asc', false)
+                    .classed('sorted-desc', false);
+
+                d3.select(this).classed(currentSortAsc ? 'sorted-asc' : 'sorted-desc', true);
+                filterAndRender();
+            });
+
+            d3.select('th.sortable[data-key="numRaces"]').classed('sorted-desc', true);
+
+        }).catch(err => {
+            console.error('Failed to load CSV data:', err);
+            d3.select('body').append('p').style('color', 'red').text("Failed to load data.");
+        });
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>MR 340 - Racer Results</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://unpkg.com/topojson-client@3"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 30px;
+    }
+
+    .centered {
+      width: 900px;
+      margin: auto;
+    }
+
+    h2 {
+      margin-bottom: 0.5em;
+    }
+
+    #main-flex {
+      display: flex;
+      align-items: flex-start;
+      gap: 36px;
+      flex-wrap: wrap;
+    }
+
+    #bar-col {
+      min-width: 320px;
+      flex: 1;
+    }
+
+    #small-map {
+      flex: none;
+      width: 336px;
+      height: 252px;
+    }
+
+    #legend {
+      margin-bottom: 25px;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 90%;
+    }
+
+    th,
+    td {
+      border: 1px solid #ccc;
+      padding: 4px 10px;
+      font-size: 15px;
+    }
+
+    th {
+      background: #f0f0f0;
+    }
+
+    .legend-swatch {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+
+    .legend-entry {
+      display: inline-block;
+      margin-right: 24px;
+      margin-bottom: 8px;
+    }
+
+    .bar.selected {
+      stroke: #222;
+      stroke-width: 4px;
+    }
+
+    .highlight-row {
+      background: #ffe08a !important;
+      font-weight: bold;
+    }
+
+    #racer-select-label {
+      margin-right: 10px;
+    }
+
+    #racer-select {
+      font-size: 15px;
+      padding: 3px 7px;
+      margin-right: 10px;
+    }
+
+    tr.selectable-row {
+      cursor: pointer;
+    }
+
+    @media (max-width: 700px) {
+      #main-flex {
+        flex-direction: column;
+        gap: 0px;
+      }
+
+      #small-map {
+        margin-top: 24px;
+      }
+
+      .centered {
+        width: 97vw;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="centered">
+    <h2 id="racer-name"></h2>
+    <div id="racer-select-container" style="margin:18px 0 12px 0; display:none;">
+      <label for="racer-select" id="racer-select-label"><strong>Jump to other racer:</strong></label>
+      <select id="racer-select">
+        <option value="">-- Select a Team Member --</option>
+      </select>
+    </div>
+    <div id="main-flex">
+      <div id="bar-col">
+        <div id="bar-chart"></div>
+        <div id="legend"></div>
+      </div>
+      <div id="small-map"></div>
+    </div>
+    <table id="member-table">
+      <thead>
+        <tr>
+          <th>Year</th>
+          <th>Division</th>
+          <th>Total Time</th>
+          <th>Status</th>
+          <th>Last Checkpoint</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <a href="javascript:history.back()">Previous</a> | <a href="divisions.html">Divisions</a> | <a href="dnf.html">Next</a>
+  </div>
+  <script>
+    const checkpointCoords = {
+      "Kaw Point": [-94.5786, 39.0997],
+      "LaBenite": [-94.3942, 39.1670],
+      "Ft Osage": [-94.1919, 39, 1881],
+      "Napolean": [-94.0856, 39.1294],
+      "Lexington": [-93.8837, 39.2153],
+      "Waverly": [-93.5221, 39.2086],
+      "Miami": [-93.2283, 39.3214],
+      "Glasgow": [-92.8460, 39.2275],
+      "Franklin Island": [-92.7736, 39.1478],
+      "Katfish Katy's": [-92.4703, 38.9173],
+      "Cooper's Landing": [-92.3832, 38.8612],
+      "Jeff City": [-92.1735, 38.5767],
+      "Chamois": [-91.7696, 38.6753],
+      "Mokane": [-91.7288, 38.7528],
+      "Portland": [-91.7177, 38.7109],
+      "Hermann": [-91.4377, 38.7048],
+      "New Haven": [-91.2190, 38.6084],
+      "Klondike": [-90.8571, 38.5834],
+      "Weldon Springs": [-90.6492, 38.7167],
+      "St. Charles": [-90.4974, 38.7881]
+    };
+    function parseTimeToHours(str) {
+      if (!str) return 0;
+      const parts = str.split(":").map(Number);
+      if (parts.length === 3) return parts[0] + parts[1] / 60 + parts[2] / 3600;
+      if (parts.length === 2) return parts[0] / 60 + parts[1] / 3600;
+      return 0;
+    }
+    function hoursToTimeStr(hours) {
+      if (typeof hours !== "number" || isNaN(hours)) return "00:00:00";
+      const h = Math.floor(hours);
+      const m = Math.floor((hours - h) * 60);
+      const s = Math.round(((hours - h) * 60 - m) * 60);
+      return String(h).padStart(2, '0') + ":" + String(m).padStart(2, '0') + ":" + String(s).padStart(2, '0');
+    }
+    const params = new URLSearchParams(window.location.search);
+    const memberName = params.get('name');
+    let selectedYear = null;
+    let setMapCheckpoint = null;
+
+    d3.csv("data.csv").then(data => {
+      // Build a master sorted list of all divisions in the entire dataset
+      const allDivisions = Array.from(new Set(data.map(d => d.Division))).sort(d3.ascending);
+      // Extended palette (use a long enough range for all divisions)
+      const colorPalette = d3.schemeSet2.concat(d3.schemeSet3, d3.schemeCategory10);
+      const colorScale = d3.scaleOrdinal()
+        .domain(allDivisions)
+        .range(colorPalette);
+
+      const memberCols = Object.keys(data[0]).filter(d => d.startsWith("Team Member"));
+      const allNames = Array.from(
+        new Set(data.flatMap(row => memberCols.map(col => (row[col] || "").trim()).filter(Boolean)))
+      ).sort((a, b) => a.localeCompare(b));
+      if (allNames.length > 0) {
+        d3.select("#racer-select-container").style("display", null);
+        const select = d3.select("#racer-select");
+        select.selectAll("option.member-option").data(allNames).enter()
+          .append("option")
+          .attr("class", "member-option")
+          .attr("value", d => d).text(d => d);
+        if (memberName && allNames.includes(memberName)) select.property("value", memberName);
+        select.on("change", function () {
+          const chosen = this.value;
+          if (chosen && chosen !== memberName) window.location.search = "name=" + encodeURIComponent(chosen);
+        });
+      }
+      if (!(memberName && allNames.includes(memberName))) {
+        d3.select("#racer-name").text("Select a racer to view results.");
+        d3.select("#bar-chart").html(""); d3.select("#legend").html(""); d3.select("#member-table tbody").html("");
+        return;
+      }
+      d3.select("#racer-name").text(memberName);
+      const races = data.filter(d => memberCols.some(col => (d[col] || "").trim() === memberName));
+      const years = Array.from(new Set(races.map(d => d.Year))).sort();
+      // For each year, get best FINISH or first row for division and time
+      const yearToTotalTime = {};
+      const yearToDivision = {};
+      years.forEach(year => {
+        const yearRows = races.filter(r => r.Year === year);
+        const best = yearRows.find(r => r.Status === "FINISH") || yearRows[0];
+        let t = best["Total Time"] && best["Total Time"].trim() ? best["Total Time"].trim() : "00:00:00";
+        yearToTotalTime[year] = t;
+        yearToDivision[year] = best.Division;
+      });
+      const barData = years.map(year => ({
+        year,
+        hours: parseTimeToHours(yearToTotalTime[year]),
+        timeStr: yearToTotalTime[year],
+        division: yearToDivision[year]
+      }));
+
+      function highlightSelection(year) {
+        selectedYear = year;
+        renderBarChart();
+        renderTable();
+        let lastCheckpoint = "";
+        for (const row of races) {
+          if (row.Year === year) { lastCheckpoint = row["Last Checkpoint"]; break; }
+        }
+        if (setMapCheckpoint) setMapCheckpoint(lastCheckpoint);
+      }
+      function clearSelection() {
+        selectedYear = null;
+        renderBarChart();
+        renderTable();
+        if (setMapCheckpoint) setMapCheckpoint(null);
+      }
+
+      function renderBarChart() {
+        d3.select("#bar-chart").html("");
+        const margin = { top: 20, right: 30, bottom: 40, left: 80 };
+        const width = 500 - margin.left - margin.right;
+        const height = 300 - margin.top - margin.bottom;
+        const svg = d3.select("#bar-chart")
+          .append("svg")
+          .attr("width", width + margin.left + margin.right)
+          .attr("height", height + margin.top + margin.bottom)
+          .append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+        const x = d3.scaleBand()
+          .domain(barData.map(d => d.year))
+          .range([0, width])
+          .padding(0.18);
+        const y = d3.scaleLinear()
+          .domain([0, d3.max(barData, d => d.hours)]).nice()
+          .range([height, 0]);
+        svg.append("g")
+          .attr("transform", `translate(0,${height})`).call(d3.axisBottom(x));
+        svg.append("g").call(d3.axisLeft(y).ticks(6));
+        svg.selectAll(".bar")
+          .data(barData)
+          .enter()
+          .append("rect")
+          .attr("class", "bar")
+          .classed("selected", d => d.year === selectedYear)
+          .attr("x", d => x(d.year))
+          .attr("y", d => y(d.hours))
+          .attr("width", x.bandwidth())
+          .attr("height", d => height - y(d.hours))
+          .attr("fill", d => colorScale(d.division))
+          .on("click", function (event, d) {
+            highlightSelection(d.year);
+            event.stopPropagation();
+          });
+        svg.append("text")
+          .attr("x", -height / 2)
+          .attr("y", -65)
+          .attr("text-anchor", "middle")
+          .attr("font-size", "15px")
+          .attr("transform", "rotate(-90)")
+          .text("Total Time (hours)");
+        svg.append("text")
+          .attr("x", width / 2)
+          .attr("y", height + 35)
+          .attr("text-anchor", "middle")
+          .attr("font-size", "15px")
+          .text("Year");
+        svg.append("text")
+          .attr("x", width / 2)
+          .attr("y", -5)
+          .attr("text-anchor", "middle")
+          .attr("font-size", "16px")
+          .attr("font-weight", "bold")
+          .text("Total Race Time by Year");
+        d3.select("#bar-chart svg").on("click", function (event) {
+          if (!d3.select(event.target).classed("bar")) {
+            clearSelection();
+          }
+        });
+
+        // ---- LEGEND: only show divisions relevant for this racer, but using full color scale ----
+        d3.select("#legend").html("");
+        const relevantDivisions = Array.from(new Set(barData.map(d => d.division))).sort(d3.ascending);
+        relevantDivisions.forEach(division => {
+          d3.select("#legend")
+            .append("span")
+            .attr("class", "legend-entry")
+            .html(`<span class="legend-swatch" style="background:${colorScale(division)}"></span>${division}`);
+        });
+      }
+      function renderTable() {
+        const tbody = d3.select("#member-table tbody").html("");
+        if (races.length === 0) {
+          tbody.append("tr").append("td")
+            .attr("colspan", 5)
+            .style("color", "#888")
+            .text("No races found for this member.");
+          return;
+        }
+        const columns = ["Year", "Division", "Total Time", "Status", "Last Checkpoint"];
+        const tr = tbody.selectAll("tr")
+          .data(races)
+          .enter()
+          .append("tr")
+          .attr("class", d =>
+            "selectable-row" + (selectedYear && d.Year === selectedYear ? " highlight-row" : "")
+          )
+          .on("click", function (event, d) {
+            highlightSelection(d.Year);
+            event.stopPropagation();
+          });
+        tr.selectAll("td")
+          .data(r =>
+            columns.map(key =>
+              (key === "Total Time" && (!r[key] || r[key].trim() === "")) ? "00:00:00" : r[key]
+            )
+          )
+          .enter()
+          .append("td")
+          .text(d => d);
+      }
+      renderBarChart();
+      renderTable();
+      document.body.addEventListener("click", function (event) {
+        if (!event.target.closest('.bar') && !event.target.closest('tr.selectable-row')) {
+          clearSelection();
+        }
+      });
+      setTimeout(function () {
+        if (typeof window.setMapCheckpointGlobal === "function") {
+          setMapCheckpoint = window.setMapCheckpointGlobal;
+        }
+      }, 500);
+    });
+  </script>
+  <!-- MAP code unchanged below -->
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      const width = 336, height = 252;
+      const topojsonUrl = "https://cdn.jsdelivr.net/npm/us-atlas@3/counties-10m.json";
+      const MISSOURI_STATE_FIPS = "29";
+      const svg = d3.select("#small-map")
+        .append("svg")
+        .attr("width", width)
+        .attr("height", height);
+      let projection, checkpointCircle = null, checkpointText = null;
+      d3.json(topojsonUrl).then(us => {
+        const counties = topojson.feature(us, us.objects.counties).features
+          .filter(d => d.id.startsWith(MISSOURI_STATE_FIPS));
+        let missouriOutline = null;
+        if (us.objects.states) {
+          missouriOutline = topojson.feature(us, us.objects.states).features
+            .find(d => d.id === MISSOURI_STATE_FIPS);
+        }
+        projection = d3.geoAlbersUsa()
+          .fitSize([width, height], { type: "FeatureCollection", features: counties });
+        const path = d3.geoPath().projection(projection);
+        svg.selectAll("path.county")
+          .data(counties)
+          .enter().append("path")
+          .attr("class", "county")
+          .attr("d", path)
+          .attr("fill", "#e0e0e0")
+          .attr("stroke", "#999")
+          .attr("stroke-width", 0.5);
+        d3.json("Rivers_and_Streams.geojson").then(function (rivers) {
+          const riverFeatures = rivers.features.filter(
+            d => d.properties.GNIS_NAME === "Missouri River");
+          svg.append("g")
+            .selectAll("path.river")
+            .data(riverFeatures)
+            .enter()
+            .append("path")
+            .attr("class", "river")
+            .attr("d", path)
+            .attr("fill", "none")
+            .attr("stroke", "#0074D9")
+            .attr("stroke-width", 2.2)
+            .attr("stroke-linejoin", "round")
+            .attr("stroke-linecap", "round");
+          const points = [
+            { name: "Kansas City", coords: [-94.5786, 39.0997] },
+            { name: "Waverly", coords: [-93.5221, 39.2086] },
+            { name: "Glasgow", coords: [-92.8460, 39.2275] },
+            { name: "Jefferson City", coords: [-92.1735, 38.5767] },
+            { name: "Hermann", coords: [-91.4377, 38.7048] },
+            { name: "Klondike", coords: [-90.8571, 38.5834] },
+            { name: "St. Charles", coords: [-90.497437, 38.788105] }
+          ];
+          svg.selectAll("circle.city")
+            .data(points)
+            .enter()
+            .append("circle")
+            .attr("class", "city")
+            .attr("cx", d => projection(d.coords)[0])
+            .attr("cy", d => projection(d.coords)[1])
+            .attr("r", 4)
+            .attr("fill", "crimson")
+            .attr("stroke", "#fff")
+            .attr("stroke-width", 1);
+        });
+        if (missouriOutline) {
+          svg.append("path")
+            .datum(missouriOutline)
+            .attr("class", "state-outline")
+            .attr("d", path)
+            .attr("fill", "none")
+            .attr("stroke", "#222")
+            .attr("stroke-width", 1.2);
+        }
+      });
+      window.setMapCheckpointGlobal = function (checkpointName) {
+        if (checkpointCircle) { checkpointCircle.remove(); checkpointCircle = null; }
+        if (checkpointText) { checkpointText.remove(); checkpointText = null; }
+        if (!checkpointName || !checkpointCoords[checkpointName] || !projection) return;
+        const coords = projection(checkpointCoords[checkpointName]);
+        checkpointCircle = svg
+          .append("circle")
+          .attr("class", "selected-ckpt")
+          .attr("cx", coords[0])
+          .attr("cy", coords[1])
+          .attr("r", 10)
+          .attr("fill", "gold")
+          .attr("stroke", "#000")
+          .attr("stroke-width", 2);
+        checkpointText = svg
+          .append("text")
+          .attr("class", "selected-ckpt-label")
+          .attr("x", coords[0] + 12)
+          .attr("y", coords[1] + 5)
+          .style("font-size", "14px")
+          .style("font-weight", "bold")
+          .style("fill", "#000")
+          .text(checkpointName);
+      };
+    });
+  </script>
+</body>
+
+</html>

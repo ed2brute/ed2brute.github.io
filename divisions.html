@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>MR 340 Finishers Grouped Bar Chart</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://d3js.org/d3.v6.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+    }
+
+    .centered {
+      width: 900px;
+      margin: auto;
+    }
+
+    .bar:hover {
+      opacity: 0.7;
+    }
+
+    .bar.selected {
+      stroke: #222;
+      stroke-width: 3px;
+    }
+
+    #tooltip {
+      position: absolute;
+      visibility: hidden;
+      background: #fff;
+      border: 1px solid #333;
+      border-radius: 4px;
+      padding: 6px 12px;
+      font-size: 14px;
+      pointer-events: none;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      z-index: 10;
+    }
+
+    #toolbar {
+      margin-bottom: 14px;
+    }
+
+    #yearDropdown,
+    #divisionDropdown,
+    #statusDropdown {
+      margin: 0 6px 10px 0;
+      padding: 4px 8px;
+      font-size: 15px;
+    }
+
+    #detail-table {
+      margin: 30px 0 0 0;
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 14px;
+    }
+
+    #detail-table th {
+      padding: 4px 12px;
+      border: 1px solid #ccc;
+      background: #f9f9f9;
+      text-align: left;
+    }
+
+    #detail-table td {
+      border: 1px solid #ddd;
+      padding: 4px 12px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="centered">
+    <h2>MR 340 Divisions</h2>
+    <p>Racers are divided into divisions including solo paddlers, row boats, standup paddle boards, and teams of all
+      sizes. Over the years divisions have changed as more racers participated and the variety of boats increased.</p>
+    <p>The fundamental rule for the MR340 is the boat must be "human powered." No motors or sails are allowed.</p>
+    <div id="toolbar">
+      <label for="yearDropdown"><strong>Year:</strong></label>
+      <select id="yearDropdown">
+        <option value="all">All Years</option>
+      </select>
+      <label for="divisionDropdown" style="margin-left:12px;"><strong>Division:</strong></label>
+      <select id="divisionDropdown">
+        <option value="all">All Divisions</option>
+      </select>
+      <label for="statusDropdown" style="margin-left:12px;"><strong>Status:</strong></label>
+      <select id="statusDropdown">
+        <option value="all">All Statuses</option>
+      </select>
+    </div>
+    <div id="chart"></div>
+    <a href="recurrence.html">Previous</a> | <a href="racer.html?name=Salli%20O%27Donnell">Next</a>
+    <div id="detail-table-container"></div>
+
+  </div>
+  <div id="tooltip"></div>
+  <script>
+    const csvFilePath = 'data.csv';
+    let globalChartData, globalYears, globalDivisions, globalStatuses, globalRawData;
+    let currentDivisionFilter = null, currentStatusFilter = null;
+
+    // ---- Get ?year= and ?status= params from URL ----
+    const params = new URLSearchParams(window.location.search);
+    const urlYear = params.get("year");
+    const urlStatus = params.get("status");
+
+    let colorScale;
+
+    d3.csv(csvFilePath).then(data => {
+      data = data.filter(d => d.Year && d.Division && d.Status);
+      globalRawData = data;
+      const years = Array.from(new Set(data.map(d => d.Year))).map(String).sort();
+      const divisions = Array.from(new Set(data.map(d => d.Division))).sort();
+      const statuses = Array.from(new Set(data.map(d => d.Status))).sort();
+
+      colorScale = d3.scaleOrdinal()
+        .domain(divisions)
+        .range(d3.schemeSet2.concat(d3.schemeSet3).concat(d3.schemeCategory10));
+
+      // Build a map: counts[year][division][status] = count
+      const counts = {};
+      data.forEach(d => {
+        const y = d.Year, div = d.Division, st = d.Status;
+        if (!counts[y]) counts[y] = {};
+        if (!counts[y][div]) counts[y][div] = {};
+        counts[y][div][st] = (counts[y][div][st] || 0) + 1;
+      });
+
+      globalYears = years;
+      globalDivisions = divisions;
+      globalStatuses = statuses;
+      globalChartData = counts;
+      const mostRecentYear = years[years.length - 1];
+
+      // --- Pick from URL param or default ---
+      const initialYear = (urlYear && years.includes(urlYear)) ? urlYear : mostRecentYear;
+      const initialStatus = (urlStatus && statuses.includes(urlStatus)) ? urlStatus : "FINISH";
+
+      // Fill dropdowns
+      d3.select("#yearDropdown")
+        .selectAll("option.year-option")
+        .data(years)
+        .enter()
+        .append("option")
+        .attr("value", d => d)
+        .text(d => d);
+
+      d3.select("#divisionDropdown")
+        .selectAll("option.division-option")
+        .data(divisions)
+        .enter()
+        .append("option")
+        .attr("value", d => d)
+        .text(d => d);
+      d3.select("#divisionDropdown").property("value", "all");
+
+      d3.select("#statusDropdown")
+        .selectAll("option.status-option")
+        .data(statuses)
+        .enter()
+        .append("option")
+        .attr("value", d => d)
+        .text(d => d);
+
+      // --- Set dropdown values on page load ---
+      d3.select("#yearDropdown").property("value", initialYear);
+      d3.select("#statusDropdown").property("value", initialStatus);
+
+      updateChart(initialYear, "all", initialStatus);
+
+      d3.select("#yearDropdown").on("change", function () {
+        const div = d3.select("#divisionDropdown").property("value");
+        const st = d3.select("#statusDropdown").property("value");
+        updateChart(this.value, div, st);
+      });
+
+      d3.select("#divisionDropdown").on("change", function () {
+        const yr = d3.select("#yearDropdown").property("value");
+        const st = d3.select("#statusDropdown").property("value");
+        currentDivisionFilter = (this.value === "all" ? null : this.value);
+        updateChart(yr, this.value, st);
+      });
+
+      d3.select("#statusDropdown").on("change", function () {
+        const yr = d3.select("#yearDropdown").property("value");
+        const div = d3.select("#divisionDropdown").property("value");
+        currentStatusFilter = (this.value === "all" ? null : this.value);
+        updateChart(yr, div, this.value);
+      });
+    });
+
+    function getChartBarData(counts, years, divisions, statuses, statusFilter) {
+      const barData = [];
+      years.forEach(year => {
+        divisions.forEach(division => {
+          let ycount = 0;
+          if (statusFilter === "all") {
+            statuses.forEach(status => {
+              ycount += (counts[year] && counts[year][division] && counts[year][division][status]) ? counts[year][division][status] : 0;
+            });
+          } else {
+            ycount = (counts[year] && counts[year][division] && counts[year][division][statusFilter]) ? counts[year][division][statusFilter] : 0;
+          }
+          barData.push({ year: year, division: division, count: ycount });
+        });
+      });
+      return barData;
+    }
+
+    function updateChart(selectedYear, selectedDivision, selectedStatus) {
+      let filteredYears = selectedYear === "all" ? globalYears : [selectedYear];
+      let filteredDivisions = selectedDivision === "all" ? globalDivisions : [selectedDivision];
+      let statusFilter = selectedStatus;
+      let barData = getChartBarData(globalChartData, filteredYears, filteredDivisions, globalStatuses, statusFilter);
+
+      d3.select("#chart svg").remove();
+      drawBarChart(barData, filteredYears, filteredDivisions, statusFilter, selectedDivision);
+      updateTable(filteredYears, selectedDivision === "all" ? null : selectedDivision, selectedStatus === "all" ? null : selectedStatus);
+    }
+
+    function drawBarChart(barData, years, divisions, statusFilter, selectedDivision) {
+      const margin = { top: 40, right: 20, bottom: 180, left: 60 };
+      const width = 900 - margin.left - margin.right;
+      const height = 500 - margin.top - margin.bottom;
+      const svg = d3.select('#chart').append('svg')
+        .attr('width', width + margin.left + margin.right)
+        .attr('height', height + margin.top + margin.bottom)
+        .append('g')
+        .attr('transform', `translate(${margin.left},${margin.top})`);
+
+      const x0 = d3.scaleBand()
+        .domain(years)
+        .range([0, width])
+        .paddingInner(0.1);
+
+      const x1 = d3.scaleBand()
+        .domain(divisions)
+        .range([0, x0.bandwidth()])
+        .padding(0.05);
+
+      const maxY = d3.max(barData, d => d.count) || 1;
+      const y = d3.scaleLinear()
+        .domain([0, maxY])
+        .range([height, 0])
+        .nice();
+
+      const tooltip = d3.select('#tooltip');
+
+      svg.append('g')
+        .attr('class', 'y-axis')
+        .call(d3.axisLeft(y));
+      svg.append("text")
+        .attr("x", -margin.left)
+        .attr("y", -20)
+        .attr("font-size", "18px")
+        .attr("font-weight", "bold")
+        .text(statusFilter === "all"
+          ? "Total MR340 Racers by Year and Division (All Statuses)"
+          : `MR340 Racers by Year and Division (${statusFilter})`
+        );
+      svg.append("text")
+        .attr("transform", "rotate(-90)")
+        .attr("x", -height / 2)
+        .attr("y", -45)
+        .attr("text-anchor", "middle")
+        .attr("font-size", "16px")
+        .text("Number of Racers");
+
+      svg.selectAll(".year-group")
+        .data(years)
+        .enter()
+        .append("g")
+        .attr("class", "year-group")
+        .attr("transform", d => `translate(${x0(d)},0)`)
+        .each(function (year) {
+          const group = d3.select(this);
+          const dataForYear = barData.filter(d => d.year === year);
+          group.selectAll("rect")
+            .data(dataForYear)
+            .enter()
+            .append("rect")
+            .attr("class", "bar")
+            .attr("x", d => x1(d.division))
+            .attr("y", y(0))
+            .attr("width", x1.bandwidth())
+            .attr("height", 0)
+            .attr("fill", d => colorScale(d.division))
+            .classed("selected", d => d.division === selectedDivision)
+            .on("mousemove", function (event, d) {
+              tooltip.style("visibility", "visible")
+                .html(
+                  `<strong>Year:</strong> ${d.year}<br/>
+               <strong>Division:</strong> ${d.division}<br/>
+               <strong>${statusFilter === "all" ? "Total" : statusFilter}:</strong> ${d.count}`
+                )
+                .style("top", (event.pageY - 40) + "px")
+                .style("left", (event.pageX + 12) + "px");
+              d3.select(this).attr("stroke", "#333").attr("stroke-width", 2);
+            })
+            .on("mouseout", function () {
+              tooltip.style("visibility", "hidden");
+              d3.select(this).attr("stroke", null);
+            })
+            .on("click", function (event, d) {
+              currentDivisionFilter = d.division;
+              d3.select("#divisionDropdown").property("value", d.division);
+              updateChart(d.year, d.division, d3.select("#statusDropdown").property("value"));
+            })
+            .transition()
+            .duration(1000)
+            .delay((d, i) => i * 25)
+            .attr("y", d => y(d.count))
+            .attr("height", d => height - y(d.count));
+
+          group.selectAll(".division-label")
+            .data(dataForYear)
+            .enter()
+            .append("text")
+            .attr("class", "division-label")
+            .attr("x", d => x1(d.division) + x1.bandwidth() / 2)
+            .attr("y", height + 22)
+            .attr("text-anchor", "end")
+            .attr("font-size", "13px")
+            .attr("fill", "#333")
+            .attr("transform", d => {
+              const x = x1(d.division) + x1.bandwidth() / 2;
+              const yLabel = height + 22;
+              return `rotate(-65,${x},${yLabel})`;
+            })
+            .text(d => d.division);
+        });
+    }
+
+    function updateTable(filteredYears, divisionFilter, statusFilter) {
+      d3.select("#detail-table").remove();
+      let filteredTableData = globalRawData.filter(row =>
+        filteredYears.includes(row.Year) &&
+        (!divisionFilter || row.Division === divisionFilter) &&
+        (!statusFilter || row.Status === statusFilter)
+      );
+      const columns = [
+        { header: "Division", key: "Division" },
+        { header: "Overall Place", key: "Overall Place" },
+        { header: "Division Place", key: "Division Place" },
+        { header: "Status", key: "Status" },
+        { header: "Total Time", key: "Total Time" },
+        { header: "Team Members", key: "Team Members" }
+      ];
+      const table = d3.select("#detail-table-container")
+        .append("table")
+        .attr("id", "detail-table");
+      const thead = table.append("thead");
+      const tbody = table.append("tbody");
+      thead.append("tr")
+        .selectAll("th").data(columns)
+        .enter().append("th").text(d => d.header);
+      const rows = tbody.selectAll("tr")
+        .data(filteredTableData)
+        .enter()
+        .append("tr");
+      rows.selectAll("td")
+        .data(function (row) {
+          const memberNames = [];
+          const maxMembers = 5;
+          for (let i = 1; i <= maxMembers; i++) {
+            const member = row[`Team Member ${i}`];
+            if (member && member.trim().length > 0) {
+              memberNames.push(member.trim());
+            }
+          }
+          return [
+            row.Division,
+            row["Overall Place"],
+            row["Division Place"],
+            row["Status"],
+            row["Total Time"],
+            memberNames.map(name =>
+              `<a href="racer.html?name=${encodeURIComponent(name)}">${name}</a>`
+            ).join("; ")
+          ];
+        })
+        .enter()
+        .append("td")
+        .html((cell, i, nodes) => {
+          if (i === columns.length - 1) {
+            return cell;
+          } else {
+            return d3.select(nodes[i]).text(cell).text();
+          }
+        });
+    }
+  </script>
+</body>
+
+</html>

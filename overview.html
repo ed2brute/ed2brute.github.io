@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MR 340 Overview</title>
+    <script src="https://d3js.org/d3.v6.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3-svg-annotation@2.5.1/d3-annotation.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+        .centered {
+            width: 800px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .bar:hover {
+            opacity: 0.7;
+        }
+        #tooltip {
+            position: absolute;
+            visibility: hidden;
+            background: #fff;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 6px 12px;
+            font-size: 14px;
+            pointer-events: none;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            z-index: 10;
+        }
+        .annotation-note-label {
+            font-size: 13px;
+            font-family: Arial, sans-serif;
+        }
+        .annotation-note-title {
+            font-weight: bold;
+            font-size: 14px;
+            font-family: Arial, sans-serif;
+        }
+        .annotation-connector {
+            stroke-width: 2;
+            opacity: 0.8;
+        }
+        .legend-border {
+            fill: none;
+            stroke: #333;
+            stroke-width: 1.5px;
+            rx: 6;
+            ry: 6;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="centered">
+        <h2>MR 340</h2>
+    </div>
+    <div class="centered">
+        <p>Although racers have 85 hours to complete the 340 mile trek across Missouri, elite athletes finish in
+            ~36 hours or less. The number of racers that did not start (DNS) or did not finish (DNF) speaks to the
+            grueling nature of this ultramarathon paddle race.</p>
+
+        <div id="firstChart"></div>
+        <a href="index.html">Previous</a> | <a href="averages.html">Next</a>
+        <p><strong>NOTES</strong>
+        <ul>
+            <li><strong>2007:</strong> Race took place 7/24/07 - 7/27/07. Unfortunately results data are lost.</li>
+            <li><strong>2011:</strong> Summer flooding. Race postponed until October.</li>
+            <li><strong>2019:</strong> Summer flooding. Race postponed until November. Due to sub-freezing
+                temperatures, the race was restricted to paddlers that could finish before the nightfall of day 2.
+            </li>
+            <li><strong>2023:</strong> Race suspended after 31 hours and 30 minutes due to severe storms and flash
+                flooding. Racers were awarded a FINAL status and a notation of their last checkpoint. A high number of DNF was recorded as
+                racers removed themselves from the dangerous conditions prior to the cancellation of the race.
+            </li>
+        </ul>
+        </p>
+        <div id="tooltip"></div>
+        <script>
+            //==== Consistent STATUS->COLOR map for ALL charts =====
+            const statusColorMap = {
+                "FINISH": "#8cc5e3",
+                "FINAL":  "#4a2377", // dark purple
+                "DNF":    "#f44f74", // pink-red
+                "DNS":    "#0d7d87"  // dark teal
+            };
+
+            const csvFilePath = 'data.csv';
+
+            d3.csv(csvFilePath)
+                .then(data => {
+                    processData(data);
+                })
+                .catch(error => {
+                    console.error('Error loading or processing CSV data:', error);
+                });
+
+            function timeToSeconds(timeStr) {
+                if (!timeStr) return null;
+                const parts = timeStr.split(':').map(Number);
+                if (parts.length !== 3) return null;
+                return parts[0] * 3600 + parts[1] * 60 + parts[2];
+            }
+
+            function secondsToHHMMSS(seconds) {
+                if (seconds == null) return '';
+                const h = Math.floor(seconds / 3600);
+                const m = Math.floor((seconds % 3600) / 60);
+                const s = Math.floor(seconds % 60);
+                return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+            }
+
+            function processData(data) {
+                // ---- Enumerate all statuses actually seen in order of appearance ---
+                // Preferred status/legend order, with any "other" statuses last
+                const uniqueStatuses = Array.from(new Set(data.map(d => d['Status'])));
+                const preferredOrder = ["FINISH", "FINAL", "DNF", "DNS"];
+                const statuses = preferredOrder.concat(
+                    uniqueStatuses.filter(s => !preferredOrder.includes(s))
+                ).filter((v, i, a) => a.indexOf(v) === i); // unique, in desired order
+
+                // Group data per year by each status
+                const nestedData = d3.groups(data, d => d['Year'], d => d['Status'])
+                    .map(([year, statusesArr]) => {
+                        const counts = Object.fromEntries(statusesArr.map(([status, entries]) => [status, entries.length]));
+                        counts.year = year;
+                        return counts;
+                    });
+
+                const fastestTimes = d3.groups(data, d => d['Year'])
+                    .map(([year, entries]) => {
+                        // "Finish" time should come from both FINISH and FINAL
+                        const validEntries = entries.filter(d =>
+                            (d['Status'] === "FINISH" || d['Status'] === "FINAL") && d['Total Time']);
+                        if (validEntries.length === 0) return { year, fastestTime: null };
+                        const fastest = d3.min(validEntries, d => timeToSeconds(d['Total Time']));
+                        return { year, fastestTime: fastest };
+                    });
+
+                nestedData.sort((a, b) => +a.year - +b.year);
+                fastestTimes.sort((a, b) => +a.year - +b.year);
+
+                visualizeData(nestedData, statuses, fastestTimes);
+            }
+
+            function visualizeData(nestedData, statuses, fastestTimes) {
+                const width = 800;
+                const height = 400;
+                const margin = { top: 20, right: 60, bottom: 40, left: 40 };
+
+                const svg = d3.select('#firstChart')
+                    .append('svg')
+                    .attr('width', width)
+                    .attr('height', height)
+                    .append('g')
+                    .attr('transform', `translate(${margin.left},${margin.top})`);
+
+                const chartWidth = width - margin.left - margin.right;
+                const chartHeight = height - margin.top - margin.bottom;
+
+                const x = d3.scaleBand()
+                    .domain(nestedData.map(d => d.year))
+                    .range([0, chartWidth])
+                    .padding(0.1);
+
+                const y = d3.scaleLinear()
+                    .domain([0, d3.max(nestedData, d => d3.sum(statuses.map(status => d[status] || 0)))])
+                    .nice()
+                    .range([chartHeight, 0]);
+
+                const barYears = new Set(nestedData.map(d => d.year));
+                const fastestValid = fastestTimes.filter(d => d.fastestTime !== null && barYears.has(d.year));
+                const y2 = d3.scaleLinear()
+                    .domain([
+                        d3.min(fastestValid, d => d.fastestTime),
+                        d3.max(fastestValid, d => d.fastestTime)
+                    ])
+                    .range([chartHeight, 0]);
+
+                const color = d3.scaleOrdinal()
+                    .domain(statuses)
+                    .range(statuses.map(s => statusColorMap[s] || "#888"));
+
+                const stack = d3.stack()
+                    .keys(statuses)
+                    .order(d3.stackOrderNone)
+                    .offset(d3.stackOffsetNone);
+
+                const series = stack(nestedData);
+
+                // Draw stacked bars
+                const layers = svg.selectAll('g.layer')
+                    .data(series)
+                    .enter()
+                    .append('g')
+                    .attr('class', 'layer')
+                    .attr('fill', d => statusColorMap[d.key] || "#888");
+
+                layers.selectAll('rect')
+                    .data(d => d)
+                    .enter()
+                    .append('rect')
+                    .attr('class', 'bar')
+                    .attr('x', d => x(d.data.year))
+                    .attr('y', chartHeight)
+                    .attr('height', 0)
+                    .attr('width', x.bandwidth())
+                    .on('mouseover', function (event, d) {
+                        const status = d3.select(this.parentNode).datum().key;
+                        const year = d.data.year;
+                        const count = d.data[status] || 0;
+                        d3.select("#tooltip")
+                            .style("visibility", "visible")
+                            .html(
+                                `<strong>Year:</strong> ${year}<br/>
+                                 <strong>Status:</strong> ${status}<br/>
+                                 <strong>Count:</strong> ${count}`
+                            );
+                    })
+                    .on('mousemove', function (event) {
+                        d3.select("#tooltip")
+                            .style("top", (event.pageY - 40) + "px")
+                            .style("left", (event.pageX + 12) + "px");
+                    })
+                    .on('mouseout', function () {
+                        d3.select("#tooltip").style("visibility", "hidden");
+                    })
+                    .on('click', function (event, d) {
+                        const status = d3.select(this.parentNode).datum().key;
+                        window.location.href = `divisions.html?year=${encodeURIComponent(d.data.year)}&status=${encodeURIComponent(status)}`;
+                        event.stopPropagation();
+                    })
+                    .transition()
+                    .duration(1000)
+                    .delay((d, i) => i * 50)
+                    .attr('y', d => y(d[1]))
+                    .attr('height', d => y(d[0]) - y(d[1]));
+
+                // Compute total entries per year for labels
+                const totals = nestedData.map(d => ({
+                    year: d.year,
+                    total: d3.sum(statuses.map(status => d[status] || 0))
+                }));
+
+                // Append total entries labels above each bar
+                svg.selectAll('.total-label')
+                    .data(totals)
+                    .enter()
+                    .append('text')
+                    .attr('class', 'total-label')
+                    .attr('x', d => x(d.year) + x.bandwidth() / 2)
+                    .attr('y', d => y(d.total) - 5)
+                    .attr('text-anchor', 'middle')
+                    .attr('fill', '#008')
+                    .text(d => d.total);
+
+                // Fastest finish circles (black)
+                svg.selectAll('circle.fastest')
+                    .data(fastestValid)
+                    .enter()
+                    .append('circle')
+                    .attr('class', 'fastest')
+                    .attr('cx', d => x(d.year) + x.bandwidth() / 2)
+                    .attr('cy', chartHeight)
+                    .attr('r', 5)
+                    .attr('fill', 'black')
+                    .on('mouseover', function (event, d) {
+                        d3.select("#tooltip")
+                            .style("visibility", "visible")
+                            .html(`<strong>Year:</strong> ${d.year}<br/>
+                                   <strong>Fastest Time:</strong> ${secondsToHHMMSS(d.fastestTime)}`);
+                    })
+                    .on('mousemove', function (event) {
+                        d3.select("#tooltip")
+                            .style("top", (event.pageY - 40) + "px")
+                            .style("left", (event.pageX + 12) + "px");
+                    })
+                    .on('mouseout', function () { d3.select("#tooltip").style("visibility", "hidden"); })
+                    .transition()
+                    .duration(1000)
+                    .delay((d, i) => i * 50)
+                    .attr('cy', d => y2(d.fastestTime));
+
+                // Add y2 axis for fastest time
+                svg.append('g')
+                    .attr('class', 'axis y2-axis')
+                    .attr('transform', `translate(${chartWidth},0)`)
+                    .call(
+                        d3.axisRight(y2)
+                            .tickFormat(d => {
+                                const h = Math.floor(d / 3600);
+                                const m = Math.floor((d % 3600) / 60);
+                                const s = Math.floor(d % 60);
+                                return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+                            })
+                    )
+                    .append('text')
+                    .attr('fill', '#d62728')
+                    .attr('x', 40)
+                    .attr('y', 0)
+                    .attr('dy', '-0.5em')
+                    .attr('text-anchor', 'start')
+                    .attr('font-weight', 'bold');
+
+                // Add x and y axis
+                svg.append('g')
+                    .attr('class', 'axis x-axis')
+                    .attr('transform', `translate(0,${chartHeight})`)
+                    .call(d3.axisBottom(x));
+
+                svg.append('g')
+                    .attr('class', 'axis y-axis')
+                    .call(d3.axisLeft(y));
+
+                // --- Legend with Border Box ---
+                const legendX = 30;
+                const legendY = 30;
+                const legendPaddingX = 8;
+                const legendPaddingY = 8;
+                const cellHeight = 22;
+                const legendWidth = 130;
+                const legendHeight = statuses.length * cellHeight + 20;
+
+                const legend = svg.append('g')
+                    .attr('class', 'legend')
+                    .attr('transform', `translate(${legendX},${legendY})`);
+
+                legend.append('rect')
+                    .attr('class', 'legend-border')
+                    .attr('x', -legendPaddingX)
+                    .attr('y', -legendPaddingY)
+                    .attr('width', legendWidth + legendPaddingX * 2)
+                    .attr('height', legendHeight + legendPaddingY * 2)
+                    .attr('rx', 6)
+                    .attr('ry', 6);
+
+                // Legend rectangles for statuses
+                legend.selectAll('rect.status')
+                    .data(statuses)
+                    .enter()
+                    .append('rect')
+                    .attr('class', 'status')
+                    .attr('x', 0)
+                    .attr('y', (d, i) => i * cellHeight)
+                    .attr('width', 18)
+                    .attr('height', 18)
+                    .attr('fill', d => statusColorMap[d] || "#888")
+                    .style('cursor', 'pointer');
+
+                // Legend text for statuses
+                legend.selectAll('text.status')
+                    .data(statuses)
+                    .enter()
+                    .append('text')
+                    .attr('class', 'status')
+                    .attr('x', 26)
+                    .attr('y', (d, i) => i * cellHeight + 9)
+                    .attr('dy', '0.35em')
+                    .attr('font-family', 'Arial, sans-serif')
+                    .text(d => d)
+                    .style('cursor', 'pointer');
+
+                // Legend for fastest time (black circle)
+                legend.append('circle')
+                    .attr('cx', 9)
+                    .attr('cy', statuses.length * cellHeight + 15)
+                    .attr('r', 6)
+                    .attr('fill', 'black');
+                legend.append('text')
+                    .attr('x', 26)
+                    .attr('y', statuses.length * cellHeight + 15)
+                    .attr('dy', '0.35em')
+                    .attr('font-family', 'Arial, sans-serif')
+                    .text('Fastest Time');
+
+                // D3 Annotation Integration
+                const fastestEntry = fastestValid.reduce((a, b) => (a.fastestTime < b.fastestTime ? a : b), fastestValid[0]);
+                const totalEntriesByYear = nestedData.map(d => ({
+                    year: d.year,
+                    total: d3.sum(statuses.map(status => d[status] || 0))
+                }));
+                const maxEntriesEntry = totalEntriesByYear.reduce((a, b) => (a.total > b.total ? a : b), totalEntriesByYear[0]);
+
+                function clampY(yPos) {
+                    return Math.max(10, yPos);
+                }
+                function getDy(yPos) {
+                    if (yPos < 90) return 80;
+                    else return -80;
+                }
+                function clampX(xPos) {
+                    const padding = 20;
+                    return Math.min(chartWidth - padding, Math.max(padding, xPos));
+                }
+
+                const annotations = [
+                    {
+                        note: {
+                            label: `${fastestEntry.year}:\n${secondsToHHMMSS(fastestEntry.fastestTime)}`,
+                            title: "Fastest Finish",
+                            wrap: 150
+                        },
+                        x: clampX(x(fastestEntry.year) + x.bandwidth() / 2),
+                        y: clampY(y2(fastestEntry.fastestTime)),
+                        dy: getDy(y2(fastestEntry.fastestTime)),
+                        dx: 0,
+                        subject: {
+                            radius: 7,
+                            radiusPadding: 4
+                        },
+                        connector: { type: "line", end: "arrow", endScale: 1.5 },
+                        color: "black"
+                    },
+                    {
+                        note: {
+                            title: "Most Entries",
+                            wrap: 150
+                        },
+                        x: clampX(x(maxEntriesEntry.year) + x.bandwidth() / 2),
+                        y: clampY(y(maxEntriesEntry.total)),
+                        dy: getDy(y(maxEntriesEntry.total)),
+                        dx: 0,
+                        connector: { type: "line", end: "arrow", endScale: 1.5 },
+                        color: "black"
+                    }
+                ];
+
+                const makeAnnotations = d3.annotation()
+                    .type(d3.annotationLabel)
+                    .annotations(annotations);
+                svg.append("g")
+                    .attr("class", "annotation-group")
+                    .call(makeAnnotations);
+            }
+        </script>
+</body>
+</html>

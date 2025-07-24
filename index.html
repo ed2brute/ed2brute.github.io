@@ -1,76 +1,183 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <script src="https://d3js.org/d3.v6.min.js"></script>
-  <style>
-        body { font-family: Arial, sans-serif; }
-        path { stroke: steelblue; stroke-width: 2; fill: none; }
-        .axis path, .axis line { fill: none; stroke: #000; shape-rendering: crispEdges; }
-    </style>
-<body>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MR 340</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://unpkg.com/topojson-client@3"></script>
+    <script src="https://rawgit.com/susielu/d3-annotation/master/d3-annotation.min.js"></script>
     <script>
-        // Set the dimensions of the SVG container
-        const margin = { top: 20, right: 30, bottom: 30, left: 50 };
-        const width = 800 - margin.left - margin.right;
-        const height = 400 - margin.top - margin.bottom;
+        document.addEventListener("DOMContentLoaded", function () {
+            const width = 800, height = 600;            
+            
+            const topojsonUrl = "https://cdn.jsdelivr.net/npm/us-atlas@3/counties-10m.json"; // US counties TopoJSON
 
-        // Create an SVG container and apply transformations for margins
-        const svg = d3.select("body")
-            .append("svg")
-            .attr("width", width + margin.left + margin.right)
-            .attr("height", height + margin.top + margin.bottom)
-            .append("g")
-            .attr("transform", `translate(${margin.left},${margin.top})`);
+            // Missouri FIPS code is 29
+            const MISSOURI_STATE_FIPS = "29";
 
-        // Data embedded directly in the script
-        const data = [
-            { date: "2023-01-01", value: 34 },
-            { date: "2023-01-02", value: 45 },
-            { date: "2023-01-03", value: 50 },
-            { date: "2023-01-04", value: 40 },
-            { date: "2023-01-05", value: 60 },
-            { date: "2023-01-06", value: 70 },
-            { date: "2023-01-07", value: 55 }
-        ];
+            const svg = d3.select("#map")
+                .append("svg")
+                .attr("width", width)
+                .attr("height", height);
 
-        // Parse the date and value
-        const parseTime = d3.timeParse("%Y-%m-%d");
-        data.forEach(d => {
-            d.date = parseTime(d.date);
-            d.value = +d.value; // Convert the value to a number
+            d3.json(topojsonUrl).then(us => {
+                // Filter for Missouri counties
+                const counties = topojson.feature(us, us.objects.counties).features
+                    .filter(d => d.id.startsWith(MISSOURI_STATE_FIPS));
+
+                // Optionally, draw the state outline
+                let missouriOutline = null;
+                if (us.objects.states) {
+                    missouriOutline = topojson.feature(us, us.objects.states).features
+                        .find(d => d.id === MISSOURI_STATE_FIPS);
+                }
+
+                // Set up projection and path
+                const projection = d3.geoAlbersUsa()
+                    .fitSize([width, height], { type: "FeatureCollection", features: counties });
+                const path = d3.geoPath().projection(projection);
+
+                const points = [
+                    { name: "Kansas City", coords: [-94.5786, 39.0997], mile: 367.5, cutoff: "Race starts 8:00 am Tuesday" },
+                    { name: "Waverly", coords: [-93.5221, 39.2086], mile: 293.5, cutoff: "8:00 pm Tuesday" },
+                    { name: "Glasgow", coords: [-92.8460, 39.2275], mile: 226.0, cutoff: "4:00 pm Wednesday" },
+                    { name: "Jefferson City", coords: [-92.1735, 38.5767], mile: 144.5, cutoff: "4:00 pm Thursday" },
+                    { name: "Hermann", coords: [-91.4377, 38.7048], mile: 98.0, cutoff: "8:00 am Friday" },
+                    { name: "Klondike", coords: [-90.8571, 38.5834], mile: 56.0, cutoff: "4:00 pm Friday" },
+                    { name: "St. Charles", coords: [-90.497437, 38.788105], mile: 27.0, cutoff: "Race ends 9:00 pm Friday" }
+                ];
+
+                // Draw counties
+                svg.selectAll("path.county")
+                    .data(counties)
+                    .enter().append("path")
+                    .attr("class", "county")
+                    .attr("d", path)
+                    .attr("fill", "#e0e0e0")
+                    .attr("stroke", "#999");
+
+                d3.json("Rivers_and_Streams.geojson").then(function (rivers) {
+                    const missouriRiverFeatures = rivers.features.filter(
+                        d => d.properties.GNIS_NAME === "Missouri River"
+                    );
+
+                    // Append river paths before other elements
+                    svg.append("g")
+                        .selectAll("path.river")
+                        .data(missouriRiverFeatures)
+                        .enter()
+                        .append("path")
+                        .attr("class", "river")
+                        .attr("d", path)
+                        .attr("fill", "none")
+                        .attr("stroke", "#0074D9")
+                        .attr("stroke-width", 3)
+                        .attr("stroke-linejoin", "round")
+                        .attr("stroke-linecap", "round");
+
+                    // Overlay points (e.g., cities) on the map
+                    svg.selectAll("circle.city")
+                        .data(points)
+                        .enter()
+                        .append("circle")
+                        .attr("class", "city")
+                        .attr("cx", d => projection(d.coords)[0])
+                        .attr("cy", d => projection(d.coords)[1])
+                        .attr("r", 0)
+                        .attr("fill", "crimson")
+                        .attr("stroke", "#fff")
+                        .attr("stroke-width", 1.5)
+                        .on("mouseover", function (event, d) {
+                            d3.select("#tooltip")
+                                .style("visibility", "visible")
+                                .html(`<strong>${d.name}</strong><br/>River Mile: ${d.mile}<br/>Cutoff: ${d.cutoff}`);
+                        })
+                        .on("mousemove", function (event) {
+                            d3.select("#tooltip")
+                                .style("top", (event.pageY - 28) + "px")
+                                .style("left", (event.pageX + 12) + "px");
+                        })
+                        .on("mouseout", function () { d3.select("#tooltip").style("visibility", "hidden"); })
+                        .transition()
+                        .duration(1500)
+                        .delay((d, i) => i * 100)
+                        .attr("r", 6);
+
+                    // (Optional) Add labels
+                    svg.selectAll("text.city-label")
+                        .data(points)
+                        .enter()
+                        .append("text")
+                        .attr("class", "city-label")
+                        .attr("x", d => projection(d.coords)[0] + 8)
+                        .attr("y", d => projection(d.coords)[1] + 4)
+                        .text(d => d.name)
+                        .style("font-size", "0px")
+                        .style("fill", "#222")
+                        .style("opacity", 0)
+                        .transition()
+                        .duration(1500)
+                        .delay((d, i) => i * 50) // Match the circle delay
+                        .style("opacity", 1)
+                        .style("font-size", "14px");
+
+                    // Draw state outline (optional)
+                    if (missouriOutline) {
+                        svg.append("path")
+                            .datum(missouriOutline)
+                            .attr("class", "state-outline")
+                            .attr("d", path)
+                            .attr("fill", "none")
+                            .attr("stroke", "#222")
+                            .attr("stroke-width", 2);
+                    }
+                });
+            });
         });
+    </script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
 
-        // Create scales for x and y axes
-        const x = d3.scaleTime()
-            .domain(d3.extent(data, d => d.date))
-            .range([0, width]);
+        .centered {
+            width: 800px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+    </style>
+</head>
 
-        const y = d3.scaleLinear()
-            .domain([0, d3.max(data, d => d.value)])
-            .range([height, 0]);
-
-        // Create the line generator function
-        const line = d3.line()
-            .x(d => x(d.date))
-            .y(d => y(d.value));
-
-        // Append the x-axis to the SVG
-        svg.append("g")
-            .attr("transform", `translate(0,${height})`)
-            .call(d3.axisBottom(x));
-
-        // Append the y-axis to the SVG
-        svg.append("g")
-            .call(d3.axisLeft(y));
-
-        // Append the line path to the SVG
-        svg.append("path")
-            .datum(data)
-            .attr("class", "line")
-            .attr("d", line);
-
-  </script>
+<body>
+    <div class="centered">
+        <h2>MR 340</h2>
+    </div>
+    <div class="centered">
+        <p>The Missouri River 340, or <a href="http://www.mr340.org">MR340</a>, is a 340 mile kayak and canoe race from
+            Kansas City, Kansas to St. Charles, Missouri
+            along the lower Missouri River. Racers have 85 hours to paddle their way across Missouri. It is the longest
+            non-stop river race in the world.</p>
+        <p>Strategy plays against endurance as racers make their way through historic river towns over four days in an
+            effort to make the podium.</p>
+        <p>There are 5 checkpoints along the course. Racers must meet cutoff times or be disqualified from the race.</p>
+        <div id="map" class="centered"></div>
+        <div class="centered">
+            <a href="overview.html">Next</a>
+        </div>
+        <div id="tooltip" style="
+        position: absolute;
+        visibility: hidden;
+        background: #fff;
+        border: 1px solid #333;
+        border-radius: 4px;
+        padding: 6px 12px;
+        font-size: 14px;
+        pointer-events: none;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        z-index: 10;">
+        </div>
 </body>
+
 </html>
