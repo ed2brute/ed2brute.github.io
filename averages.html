@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -10,14 +11,17 @@
         body {
             font-family: Arial, sans-serif;
         }
+
         .centered {
             width: 800px;
             margin-left: auto;
             margin-right: auto;
         }
+
         .bar:hover {
             opacity: 0.7;
         }
+
         #tooltip {
             position: absolute;
             visibility: hidden;
@@ -30,6 +34,7 @@
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
             z-index: 10;
         }
+
         /* Add legend border */
         .legend-border {
             fill: none;
@@ -40,328 +45,337 @@
         }
     </style>
 </head>
+
 <body>
-<div class="centered">
-    <h2>MR 340 Finishes</h2>
-</div>
-<div class="centered">
-    <p>As the race matured, mean and median finish times settled out. Minor variations are thought to be related to weather and river stage differences
-        between races.</p>
-    <div id="firstChart"></div>
-    <a href="overview.html">Previous</a> | <a href="recurrence.html">Next</a>
-    <p><strong>NOTES</strong>
-    <ul>
-        <li><strong>2007:</strong> Race took place 7/24/07 - 7/27/07. Unfortunately results data are lost.</li>
-        <li><strong>2011:</strong> Summer flooding. Race postponed until October.</li>
-        <li><strong>2019:</strong> Summer flooding. Race postponed until November. Due to sub-freezing
-            temperatures, the race was restricted to paddlers that could finish before the nightfall of day 2.
-        </li>
-        <li><strong>2023:</strong> Race suspended after 31 hours and 30 minutes due to severe storms and flash
-            flooding. Racers were awarded a FINAL status and a notation of their last checkpoint. A high number of DNF was recorded as
-            racers removed themselves from the dangerous conditions prior to the cancellation of the race.
-        </li>
-    </ul>
-    </p>
-    <div id="tooltip"></div>
-    <script>
-        
-        const statusColorMap = {                
+    <div class="centered">
+        <h2>MR 340 Finishes</h2>
+    </div>
+    <div class="centered">
+        <p>As the race matured, mean and median finish times settled out. Minor variations are thought to be related to
+            weather and river stage differences
+            between races.</p>
+        <div id="firstChart"></div>
+        <a href="overview.html">Previous</a> | <a href="recurrence.html">Next</a>
+        <p><strong>NOTES</strong>
+        <ul>
+            <li><strong>2007:</strong> Race took place 7/24/07 - 7/27/07. Unfortunately results data are lost.</li>
+            <li><strong>2011:</strong> Summer flooding. Race postponed until October.</li>
+            <li><strong>2019:</strong> Summer flooding. Race postponed until November. Due to sub-freezing
+                temperatures, the race was restricted to paddlers that could finish before the nightfall of day 2.
+            </li>
+            <li><strong>2023:</strong> Race suspended after 31 hours and 30 minutes due to severe storms and flash
+                flooding. Racers were awarded a FINAL status and a notation of their last checkpoint. A high number of
+                DNF was recorded as
+                racers removed themselves from the dangerous conditions prior to the cancellation of the race.
+            </li>
+        </ul>
+        </p>
+        <div id="tooltip"></div>
+        <script>
+
+            const statusColorMap = {
                 "FINISH": "#8cc5e3",
             };
 
-        const csvFilePath = 'data.csv';
+            const csvFilePath = 'data.csv';
 
-        d3.csv(csvFilePath)
-            .then(data => {
-                processData(data);
-            })
-            .catch(error => {
-                console.error('Error loading or processing CSV data:', error);
-            });
-
-        function timeToSeconds(timeStr) {
-            if (!timeStr) return null;
-            const parts = timeStr.split(':').map(Number);
-            if (parts.length !== 3) return null;
-            return parts[0] * 3600 + parts[1] * 60 + parts[2];
-        }
-
-        function secondsToHHMMSS(seconds) {
-            if (seconds == null) return '';
-            const h = Math.floor(seconds / 3600);
-            const m = Math.floor((seconds % 3600) / 60);
-            const s = Math.floor(seconds % 60);
-            return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-        }
-
-        function processData(data) {
-            // For each year, compute the number of FINISH, mean and median
-            const grouped = d3.groups(data, d => d.Year)
-                .map(([year, entries]) => {
-                    const finishEntries = entries.filter(d => d.Status === "FINISH" && d['Total Time']);
-                    const finishTimes = finishEntries
-                        .map(d => timeToSeconds(d['Total Time']))
-                        .filter(d => d !== null);
-                    return {
-                        year,
-                        finishCount: finishEntries.length,
-                        meanTime: finishTimes.length ? d3.mean(finishTimes) : null,
-                        medianTime: finishTimes.length ? d3.median(finishTimes) : null,
-                        finishTimesAll: finishTimes
-                    };
+            d3.csv(csvFilePath)
+                .then(data => {
+                    processData(data);
+                })
+                .catch(error => {
+                    console.error('Error loading or processing CSV data:', error);
                 });
 
-            grouped.sort((a, b) => +a.year - +b.year);
-
-            // Aggregate all finishTimes across all years:
-            const allFinishTimes = grouped.reduce(
-                (acc, d) => acc.concat(d.finishTimesAll || []),
-                []
-            );
-            const overallMean = allFinishTimes.length ? d3.mean(allFinishTimes) : null;
-
-            visualizeData(grouped, overallMean);
-        }
-
-        function visualizeData(yearData, overallMean) {
-            const width = 800;
-            const height = 400;
-            const margin = { top: 20, right: 90, bottom: 40, left: 50 };
-
-            const svg = d3.select('#firstChart')
-                .append('svg')
-                .attr('width', width)
-                .attr('height', height)
-                .append('g')
-                .attr('transform', `translate(${margin.left},${margin.top})`);
-
-            const chartWidth = width - margin.left - margin.right;
-            const chartHeight = height - margin.top - margin.bottom;
-
-            const x = d3.scaleBand()
-                .domain(yearData.map(d => d.year))
-                .range([0, chartWidth])
-                .padding(0.1);
-
-            const y = d3.scaleLinear()
-                .domain([0, d3.max(yearData, d => d.finishCount)])
-                .nice()
-                .range([chartHeight, 0]);
-
-            const finishedData = yearData.filter(d => d.meanTime !== null && d.medianTime !== null);
-
-            const y2 = d3.scaleLinear()
-                .domain([
-                    d3.min(finishedData, d => Math.min(d.meanTime, d.medianTime)),
-                    d3.max(finishedData, d => Math.max(d.meanTime, d.medianTime))
-                ])
-                .range([chartHeight, 0])
-                .nice();
-
-            // Draw single bars for FINISH count (now using consistent color!)
-            svg.selectAll('rect.bar')
-                .data(yearData)
-                .enter()
-                .append('rect')
-                .attr('class', 'bar')
-                .attr('x', d => x(d.year))
-                .attr('y', chartHeight)
-                .attr('width', x.bandwidth())
-                .attr('height', 0)
-                .attr('fill', statusColorMap["FINISH"])
-                .on('mouseover', function(event, d) {
-                    d3.select("#tooltip")
-                        .style("visibility", "visible")
-                        .html(
-                            `<strong>Year:</strong> ${d.year}<br/>
-                             <strong>Finishers:</strong> ${d.finishCount}`
-                        );
-                })
-                .on('mousemove', function(event) {
-                    d3.select("#tooltip")
-                        .style("top", (event.pageY - 40) + "px")
-                        .style("left", (event.pageX + 12) + "px");
-                })
-                .on('mouseout', function() {
-                    d3.select("#tooltip").style("visibility", "hidden");
-                })
-                .transition()
-                .duration(1000)
-                .delay((d,i) => i * 50)
-                .attr('y', d => y(d.finishCount))
-                .attr('height', d => chartHeight - y(d.finishCount));
-
-            // Plot mean finish time (circle)
-            svg.selectAll('circle.mean')
-                .data(finishedData)
-                .enter()
-                .append('circle')
-                .attr('class', 'mean')
-                .attr('cx', d => x(d.year) + x.bandwidth()/2)
-                .attr('cy', chartHeight)
-                .attr('r', 5)
-                .attr('fill', '#4a2377')
-                .on('mouseover', function(event, d) {
-                    d3.select("#tooltip")
-                        .style("visibility", "visible")
-                        .html(`<strong>Year:</strong> ${d.year}<br/>
-                               <strong>Mean Time:</strong> ${secondsToHHMMSS(d.meanTime)}`);
-                })
-                .on('mousemove', function(event) {
-                    d3.select("#tooltip")
-                        .style("top", (event.pageY - 40) + "px")
-                        .style("left", (event.pageX + 12) + "px");
-                })
-                .on('mouseout', function() { d3.select("#tooltip").style("visibility", "hidden"); })
-                .transition()
-                .duration(1000)
-                .delay((d,i) => i * 50)
-                .attr('cy', d => y2(d.meanTime));
-
-            // Plot median finish time (diamond)
-            svg.selectAll('rect.median')
-                .data(finishedData)
-                .enter()
-                .append('rect')
-                .attr('class', 'median')
-                .attr('x', d => x(d.year) + x.bandwidth()/2 - 5)
-                .attr('y', chartHeight - 5)
-                .attr('width', 10)
-                .attr('height', 10)
-                .attr('fill', '#f55f74')
-                .attr('transform', d => `rotate(45,${x(d.year) + x.bandwidth()/2},${chartHeight})`)
-                .on('mouseover', function(event, d) {
-                    d3.select("#tooltip")
-                        .style("visibility", "visible")
-                        .html(`<strong>Year:</strong> ${d.year}<br/>
-                               <strong>Median Time:</strong> ${secondsToHHMMSS(d.medianTime)}`);
-                })
-                .on('mousemove', function(event) {
-                    d3.select("#tooltip")
-                        .style("top", (event.pageY - 40) + "px")
-                        .style("left", (event.pageX + 12) + "px");
-                })
-                .on('mouseout', function() { d3.select("#tooltip").style("visibility", "hidden"); })
-                .transition()
-                .duration(1000)
-                .delay((d,i) => i * 50)
-                .attr('y', d => y2(d.medianTime) - 5)
-                .attr('transform', d => `rotate(45,${x(d.year) + x.bandwidth()/2},${y2(d.medianTime)})`);
-
-            // Y2 axis for mean/median time
-            svg.append('g')
-                .attr('class', 'axis y2-axis')
-                .attr('transform', `translate(${chartWidth},0)`)
-                .call(
-                    d3.axisRight(y2)
-                        .tickFormat(d => {
-                            const h = Math.floor(d / 3600);
-                            const m = Math.floor((d % 3600) / 60);
-                            const s = Math.floor(d % 60);
-                            return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-                        })
-                )
-                .append('text')
-                .attr('fill', '#000')
-                .attr('x', 40)
-                .attr('y', 0)
-                .attr('dy', '-0.5em')
-                .attr('text-anchor', 'start')
-                .attr('font-weight', 'bold')
-                .text('Finish Time (HH:MM:SS)');
-
-            // X and Y axis for counts
-            svg.append('g')
-                .attr('class', 'axis x-axis')
-                .attr('transform', `translate(0,${chartHeight})`)
-                .call(d3.axisBottom(x));
-
-            svg.append('g')
-                .attr('class', 'axis y-axis')
-                .call(d3.axisLeft(y));
-
-            // Draw overall average finish time line
-            if(overallMean !== null) {
-                svg.append('line')
-                    .attr('class', 'avg-line')
-                    .attr('x1', 0)
-                    .attr('x2', chartWidth)
-                    .attr('y1', y2(overallMean))
-                    .attr('y2', y2(overallMean))
-                    .attr('stroke', 'black')
-                    .attr('stroke-dasharray', '6 3')
-                    .attr('stroke-width', 2);
-
-                svg.append('text')
-                    .attr('x', chartWidth - 5)
-                    .attr('y', y2(overallMean) - 8)
-                    .attr('text-anchor', 'end')
-                    .attr('fill', 'black')
-                    .attr('font-size', 12)
-                    .attr('font-weight', 'bold')
-                    .text(`Overall Avg: ${secondsToHHMMSS(overallMean)}`);
+            function timeToSeconds(timeStr) {
+                if (!timeStr) return null;
+                const parts = timeStr.split(':').map(Number);
+                if (parts.length !== 3) return null;
+                return parts[0] * 3600 + parts[1] * 60 + parts[2];
             }
 
-            // Add legend group with border
-            const legend = svg.append('g')
-                .attr('class', 'legend')
-                .attr('transform', `translate(60,20)`);
+            function secondsToHHMMSS(seconds) {
+                if (seconds == null) return '';
+                const h = Math.floor(seconds / 3600);
+                const m = Math.floor((seconds % 3600) / 60);
+                const s = Math.floor(seconds % 60);
+                return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+            }
 
-            const legendPaddingX = 6;
-            const legendPaddingY = 6;
-            const legendWidth = 160;
-            const legendHeight = 68;
+            function processData(data) {
+                // For each year, compute the number of FINISH, mean and median
+                const grouped = d3.groups(data, d => d.Year)
+                    .map(([year, entries]) => {
+                        const finishEntries = entries.filter(d => d.Status === "FINISH" && d['Total Time']);
+                        const finishTimes = finishEntries
+                            .map(d => timeToSeconds(d['Total Time']))
+                            .filter(d => d !== null);
+                        return {
+                            year,
+                            finishCount: finishEntries.length,
+                            meanTime: finishTimes.length ? d3.mean(finishTimes) : null,
+                            medianTime: finishTimes.length ? d3.median(finishTimes) : null,
+                            finishTimesAll: finishTimes
+                        };
+                    });
 
-            // Insert border rect behind legend items
-            legend.append('rect')
-                .attr('class', 'legend-border')
-                .attr('x', -legendPaddingX)
-                .attr('y', -legendPaddingY)
-                .attr('width', legendWidth + legendPaddingX * 2)
-                .attr('height', legendHeight + legendPaddingY * 2)
-                .attr('rx', 6)
-                .attr('ry', 6);
+                grouped.sort((a, b) => +a.year - +b.year);
 
-            // FINISH bar legend (use status color!)
-            legend.append('rect')
-                .attr('x', 0)
-                .attr('y', 0)
-                .attr('width', 16)
-                .attr('height', 16)
-                .attr('fill', statusColorMap["FINISH"]);
-            legend.append('text')
-                .attr('x', 24)
-                .attr('y', 8)
-                .attr('dy', '0.35em')
-                .text('FINISH Count');
+                // Aggregate all finishTimes across all years:
+                const allFinishTimes = grouped.reduce(
+                    (acc, d) => acc.concat(d.finishTimesAll || []),
+                    []
+                );
+                const overallMean = allFinishTimes.length ? d3.mean(allFinishTimes) : null;
 
-            // Mean (circle)
-            legend.append('circle')
-                .attr('cx', 8)
-                .attr('cy', 32)
-                .attr('r', 7)
-                .attr('fill', '#4a2377');
-            legend.append('text')
-                .attr('x', 24)
-                .attr('y', 32)
-                .attr('dy', '0.35em')
-                .text('Mean Finish Time');
+                visualizeData(grouped, overallMean);
+            }
 
-            // Median (diamond)
-            legend.append('rect')
-                .attr('x', 1)
-                .attr('y', 52)
-                .attr('width', 14)
-                .attr('height', 14)
-                .attr('fill', '#0d7d87')
-                .attr('transform', 'rotate(45,8,59)');
-            legend.append('text')
-                .attr('x', 24)
-                .attr('y', 59)
-                .attr('dy', '0.35em')
-                .text('Median Finish Time');
-        }
-    </script>
-</div>
+            function visualizeData(yearData, overallMean) {
+                const width = 800;
+                const height = 400;
+                const margin = { top: 20, right: 90, bottom: 40, left: 50 };
+
+                const svg = d3.select('#firstChart')
+                    .append('svg')
+                    .attr('width', width)
+                    .attr('height', height)
+                    .append('g')
+                    .attr('transform', `translate(${margin.left},${margin.top})`);
+
+                const chartWidth = width - margin.left - margin.right;
+                const chartHeight = height - margin.top - margin.bottom;
+
+                const x = d3.scaleBand()
+                    .domain(yearData.map(d => d.year))
+                    .range([0, chartWidth])
+                    .padding(0.1);
+
+                const y = d3.scaleLinear()
+                    .domain([0, d3.max(yearData, d => d.finishCount)])
+                    .nice()
+                    .range([chartHeight, 0]);
+
+                const finishedData = yearData.filter(d => d.meanTime !== null && d.medianTime !== null);
+
+                const y2 = d3.scaleLinear()
+                    .domain([
+                        d3.min(finishedData, d => Math.min(d.meanTime, d.medianTime)),
+                        d3.max(finishedData, d => Math.max(d.meanTime, d.medianTime))
+                    ])
+                    .range([chartHeight, 0])
+                    .nice();
+
+                // Draw single bars for FINISH count
+                svg.selectAll('rect.bar')
+                    .data(yearData)
+                    .enter()
+                    .append('rect')
+                    .attr('class', 'bar')
+                    .attr('x', d => x(d.year))
+                    .attr('y', chartHeight)
+                    .attr('width', x.bandwidth())
+                    .attr('height', 0)
+                    .attr('fill', statusColorMap["FINISH"])
+                    .on('mouseover', function (event, d) {
+                        d3.select("#tooltip")
+                            .style("visibility", "visible")
+                            .html(
+                                `<strong>Year:</strong> ${d.year}<br/>
+                             <strong>Finishers:</strong> ${d.finishCount}`
+                            );
+                    })
+                    .on('mousemove', function (event) {
+                        d3.select("#tooltip")
+                            .style("top", (event.pageY - 40) + "px")
+                            .style("left", (event.pageX + 12) + "px");
+                    })
+                    .on('mouseout', function () {
+                        d3.select("#tooltip").style("visibility", "hidden");
+                    })
+                    .on('click', function (event, d) {
+                        const url = `divisions.html?year=${encodeURIComponent(d.year)}&status=FINISH`;
+                        window.location.href = url;
+                        event.stopPropagation();
+                    })                    
+                    .transition()
+                    .duration(1000)
+                    .delay((d, i) => i * 50)
+                    .attr('y', d => y(d.finishCount))
+                    .attr('height', d => chartHeight - y(d.finishCount));
+
+                // Plot mean finish time (circle)
+                svg.selectAll('circle.mean')
+                    .data(finishedData)
+                    .enter()
+                    .append('circle')
+                    .attr('class', 'mean')
+                    .attr('cx', d => x(d.year) + x.bandwidth() / 2)
+                    .attr('cy', chartHeight)
+                    .attr('r', 5)
+                    .attr('fill', '#4a2377')
+                    .on('mouseover', function (event, d) {
+                        d3.select("#tooltip")
+                            .style("visibility", "visible")
+                            .html(`<strong>Year:</strong> ${d.year}<br/>
+                               <strong>Mean Time:</strong> ${secondsToHHMMSS(d.meanTime)}`);
+                    })
+                    .on('mousemove', function (event) {
+                        d3.select("#tooltip")
+                            .style("top", (event.pageY - 40) + "px")
+                            .style("left", (event.pageX + 12) + "px");
+                    })
+                    .on('mouseout', function () { d3.select("#tooltip").style("visibility", "hidden"); })
+                    .transition()
+                    .duration(1000)
+                    .delay((d, i) => i * 50)
+                    .attr('cy', d => y2(d.meanTime));
+
+                // Plot median finish time (diamond)
+                svg.selectAll('rect.median')
+                    .data(finishedData)
+                    .enter()
+                    .append('rect')
+                    .attr('class', 'median')
+                    .attr('x', d => x(d.year) + x.bandwidth() / 2 - 5)
+                    .attr('y', chartHeight - 5)
+                    .attr('width', 10)
+                    .attr('height', 10)
+                    .attr('fill', '#f55f74')
+                    .attr('transform', d => `rotate(45,${x(d.year) + x.bandwidth() / 2},${chartHeight})`)
+                    .on('mouseover', function (event, d) {
+                        d3.select("#tooltip")
+                            .style("visibility", "visible")
+                            .html(`<strong>Year:</strong> ${d.year}<br/>
+                               <strong>Median Time:</strong> ${secondsToHHMMSS(d.medianTime)}`);
+                    })
+                    .on('mousemove', function (event) {
+                        d3.select("#tooltip")
+                            .style("top", (event.pageY - 40) + "px")
+                            .style("left", (event.pageX + 12) + "px");
+                    })
+                    .on('mouseout', function () { d3.select("#tooltip").style("visibility", "hidden"); })
+                    .transition()
+                    .duration(1000)
+                    .delay((d, i) => i * 50)
+                    .attr('y', d => y2(d.medianTime) - 5)
+                    .attr('transform', d => `rotate(45,${x(d.year) + x.bandwidth() / 2},${y2(d.medianTime)})`);
+
+                // Y2 axis for mean/median time
+                svg.append('g')
+                    .attr('class', 'axis y2-axis')
+                    .attr('transform', `translate(${chartWidth},0)`)
+                    .call(
+                        d3.axisRight(y2)
+                            .tickFormat(d => {
+                                const h = Math.floor(d / 3600);
+                                const m = Math.floor((d % 3600) / 60);
+                                const s = Math.floor(d % 60);
+                                return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+                            })
+                    )
+                    .append('text')
+                    .attr('fill', '#000')
+                    .attr('x', 40)
+                    .attr('y', 0)
+                    .attr('dy', '-0.5em')
+                    .attr('text-anchor', 'start')
+                    .attr('font-weight', 'bold')
+                    .text('Finish Time (HH:MM:SS)');
+
+                // X and Y axis for counts
+                svg.append('g')
+                    .attr('class', 'axis x-axis')
+                    .attr('transform', `translate(0,${chartHeight})`)
+                    .call(d3.axisBottom(x));
+
+                svg.append('g')
+                    .attr('class', 'axis y-axis')
+                    .call(d3.axisLeft(y));
+
+                // Draw overall average finish time line
+                if (overallMean !== null) {
+                    svg.append('line')
+                        .attr('class', 'avg-line')
+                        .attr('x1', 0)
+                        .attr('x2', chartWidth)
+                        .attr('y1', y2(overallMean))
+                        .attr('y2', y2(overallMean))
+                        .attr('stroke', 'black')
+                        .attr('stroke-dasharray', '6 3')
+                        .attr('stroke-width', 2);
+
+                    svg.append('text')
+                        .attr('x', chartWidth - 5)
+                        .attr('y', y2(overallMean) - 8)
+                        .attr('text-anchor', 'end')
+                        .attr('fill', 'black')
+                        .attr('font-size', 12)
+                        .attr('font-weight', 'bold')
+                        .text(`Overall Avg: ${secondsToHHMMSS(overallMean)}`);
+                }
+
+                // Add legend group with border
+                const legend = svg.append('g')
+                    .attr('class', 'legend')
+                    .attr('transform', `translate(60,20)`);
+
+                const legendPaddingX = 6;
+                const legendPaddingY = 6;
+                const legendWidth = 160;
+                const legendHeight = 68;
+
+                // Insert border rect behind legend items
+                legend.append('rect')
+                    .attr('class', 'legend-border')
+                    .attr('x', -legendPaddingX)
+                    .attr('y', -legendPaddingY)
+                    .attr('width', legendWidth + legendPaddingX * 2)
+                    .attr('height', legendHeight + legendPaddingY * 2)
+                    .attr('rx', 6)
+                    .attr('ry', 6);
+
+                // FINISH bar legend (use status color!)
+                legend.append('rect')
+                    .attr('x', 0)
+                    .attr('y', 0)
+                    .attr('width', 16)
+                    .attr('height', 16)
+                    .attr('fill', statusColorMap["FINISH"]);
+                legend.append('text')
+                    .attr('x', 24)
+                    .attr('y', 8)
+                    .attr('dy', '0.35em')
+                    .text('FINISH Count');
+
+                // Mean (circle)
+                legend.append('circle')
+                    .attr('cx', 8)
+                    .attr('cy', 32)
+                    .attr('r', 7)
+                    .attr('fill', '#4a2377');
+                legend.append('text')
+                    .attr('x', 24)
+                    .attr('y', 32)
+                    .attr('dy', '0.35em')
+                    .text('Mean Finish Time');
+
+                // Median (diamond)
+                legend.append('rect')
+                    .attr('x', 1)
+                    .attr('y', 52)
+                    .attr('width', 14)
+                    .attr('height', 14)
+                    .attr('fill', '#0d7d87')
+                    .attr('transform', 'rotate(45,8,59)');
+                legend.append('text')
+                    .attr('x', 24)
+                    .attr('y', 59)
+                    .attr('dy', '0.35em')
+                    .text('Median Finish Time');
+            }
+        </script>
+    </div>
 </body>
+
 </html>
